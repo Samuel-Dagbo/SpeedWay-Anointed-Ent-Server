@@ -22,6 +22,7 @@ const productSchema = z.object({
   quantity: z.preprocess((val) => Number(val), z.number().int()),
   description: z.string().optional().nullable(),
   image_url: z.string().url().optional().nullable(),
+  car_image_url: z.string().url().optional().nullable(),
   status: z.enum(["active", "inactive"]).default("active")
 });
 
@@ -32,14 +33,17 @@ const upload = multer({
 
 function maybeUpload(req, res, next) {
   if (req.is("multipart/form-data")) {
-    return upload.single("image")(req, res, next);
+    return upload.fields([
+      { name: "image", maxCount: 1 },
+      { name: "car_image", maxCount: 1 }
+    ])(req, res, next);
   }
   return next();
 }
 
-async function uploadProductImage(file) {
+async function uploadProductImage(file, folder = "products") {
   const bucket = process.env.SUPABASE_STORAGE_BUCKET || "product-images";
-  const filename = `products/${crypto.randomUUID()}.jpg`;
+  const filename = `${folder}/${crypto.randomUUID()}.jpg`;
   const processed = await sharp(file.buffer)
     .resize({ width: 1400, withoutEnlargement: true })
     .jpeg({ quality: 80 })
@@ -86,8 +90,14 @@ productsRouter.post("/", authMiddleware("admin"), maybeUpload, async (req, res) 
   try {
     const raw = req.body;
     const payload = productSchema.parse(raw);
-    if (req.file) {
-      payload.image_url = await uploadProductImage(req.file);
+    const files = req.files || {};
+    const productImage = Array.isArray(files.image) ? files.image[0] : null;
+    const carImage = Array.isArray(files.car_image) ? files.car_image[0] : null;
+    if (productImage) {
+      payload.image_url = await uploadProductImage(productImage, "products");
+    }
+    if (carImage) {
+      payload.car_image_url = await uploadProductImage(carImage, "cars");
     }
     const { data, error } = await supabaseAdmin
       .from("products")
@@ -104,8 +114,14 @@ productsRouter.post("/", authMiddleware("admin"), maybeUpload, async (req, res) 
 productsRouter.put("/:id", authMiddleware("admin"), maybeUpload, async (req, res) => {
   try {
     const payload = productSchema.partial().parse(req.body);
-    if (req.file) {
-      payload.image_url = await uploadProductImage(req.file);
+    const files = req.files || {};
+    const productImage = Array.isArray(files.image) ? files.image[0] : null;
+    const carImage = Array.isArray(files.car_image) ? files.car_image[0] : null;
+    if (productImage) {
+      payload.image_url = await uploadProductImage(productImage, "products");
+    }
+    if (carImage) {
+      payload.car_image_url = await uploadProductImage(carImage, "cars");
     }
     const { data, error } = await supabaseAdmin
       .from("products")
