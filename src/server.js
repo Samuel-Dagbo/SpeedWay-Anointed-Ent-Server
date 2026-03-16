@@ -19,6 +19,7 @@ import { usersRouter } from "./routes/users.js";
 import { yearsRouter } from "./routes/years.js";
 import { reviewsRouter } from "./routes/reviews.js";
 import { emailRouter } from "./routes/email.js";
+import { settingsRouter } from "./routes/settings.js";
 
 const app = express();
 
@@ -44,6 +45,7 @@ app.use("/users", usersRouter);
 app.use("/years", yearsRouter);
 app.use("/reviews", reviewsRouter);
 app.use("/email", emailRouter);
+app.use("/settings", settingsRouter);
 
 // Generic error handler
 app.use((err, _req, res, _next) => {
