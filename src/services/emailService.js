@@ -6,7 +6,11 @@ const {
   GOOGLE_CLIENT_SECRET,
   GOOGLE_REFRESH_TOKEN,
   GMAIL_USER,
-  OWNER_EMAIL
+  OWNER_EMAIL,
+  SMTP_HOST,
+  SMTP_PORT,
+  SMTP_SECURE,
+  SMTP_REQUIRE_TLS
 } = process.env;
 
 const ADMIN_EMAIL = OWNER_EMAIL || GMAIL_USER;
@@ -30,8 +34,21 @@ async function createTransporter() {
 
   const accessToken = await oAuth2Client.getAccessToken();
 
+  const host = SMTP_HOST || "smtp.gmail.com";
+  const port = Number(SMTP_PORT || 465);
+  const secure =
+    typeof SMTP_SECURE === "string"
+      ? SMTP_SECURE.toLowerCase() === "true"
+      : port === 465;
+
   return nodemailer.createTransport({
-    service: "gmail",
+    host,
+    port,
+    secure,
+    requireTLS:
+      typeof SMTP_REQUIRE_TLS === "string"
+        ? SMTP_REQUIRE_TLS.toLowerCase() === "true"
+        : port === 587,
     auth: {
       type: "OAuth2",
       user: GMAIL_USER,
