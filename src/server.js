@@ -56,3 +56,21 @@ app.listen(port, () => {
   console.log(`API server running on http://localhost:${port}`);
 });
 
+// Optional self-ping to reduce cold starts on hosts like Render
+const selfPingUrl = process.env.SELF_PING_URL;
+const selfPingMinutes = Number(process.env.SELF_PING_MINUTES || 10);
+if (selfPingUrl) {
+  const intervalMs = Math.max(selfPingMinutes, 1) * 60 * 1000;
+  const ping = async () => {
+    try {
+      await fetch(selfPingUrl, { method: "GET" });
+      console.log("[self-ping] ok", new Date().toISOString());
+    } catch (err) {
+      console.warn("[self-ping] failed:", err?.message || err);
+    }
+  };
+
+  ping();
+  setInterval(ping, intervalMs);
+}
+
