@@ -1,5 +1,4 @@
-﻿import { google } from "googleapis";
-import nodemailer from "nodemailer";
+import { google } from "googleapis";
 
 const {
   GOOGLE_CLIENT_ID,
@@ -7,61 +6,36 @@ const {
   GOOGLE_REFRESH_TOKEN,
   GMAIL_USER,
   OWNER_EMAIL,
-  SMTP_HOST,
-  SMTP_PORT,
-  SMTP_SECURE,
-  SMTP_REQUIRE_TLS
+  NOTIFICATION_COPY_EMAILS
 } = process.env;
 
 const ADMIN_EMAIL = OWNER_EMAIL || GMAIL_USER;
+const OAUTH_REDIRECT_URI = "https://developers.google.com/oauthplayground";
 
-const oAuth2Client =
-  GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && GOOGLE_REFRESH_TOKEN
-    ? new google.auth.OAuth2(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET)
-    : null;
+const canSendEmail = () =>
+  Boolean(GMAIL_USER && GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && GOOGLE_REFRESH_TOKEN);
 
-if (oAuth2Client && GOOGLE_REFRESH_TOKEN) {
-  oAuth2Client.setCredentials({ refresh_token: GOOGLE_REFRESH_TOKEN });
-}
+const getCopyEmails = (primaryTo) => {
+  const raw = String(NOTIFICATION_COPY_EMAILS || "");
+  const list = raw
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+  return list.filter(
+    (email) => email.toLowerCase() !== String(primaryTo || "").toLowerCase()
+  );
+};
 
-async function createTransporter() {
-  if (!oAuth2Client || !GMAIL_USER) {
-    console.warn(
-      "[email] Gmail OAuth2 not fully configured. Emails will not be sent."
-    );
-    return null;
-  }
-
-  const accessToken = await oAuth2Client.getAccessToken();
-
-  const host = SMTP_HOST || "smtp.gmail.com";
-  const port = Number(SMTP_PORT || 465);
-  const secure =
-    typeof SMTP_SECURE === "string"
-      ? SMTP_SECURE.toLowerCase() === "true"
-      : port === 465;
-
-  return nodemailer.createTransport({
-    host,
-    port,
-    secure,
-    requireTLS:
-      typeof SMTP_REQUIRE_TLS === "string"
-        ? SMTP_REQUIRE_TLS.toLowerCase() === "true"
-        : port === 587,
-    auth: {
-      type: "OAuth2",
-      user: GMAIL_USER,
-      clientId: GOOGLE_CLIENT_ID,
-      clientSecret: GOOGLE_CLIENT_SECRET,
-      refreshToken: GOOGLE_REFRESH_TOKEN,
-      accessToken: accessToken?.token
-    },
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 10000
-  });
-}
+const getAccessToken = async () => {
+  const oauth2Client = new google.auth.OAuth2(
+    GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET,
+    OAUTH_REDIRECT_URI
+  );
+  oauth2Client.setCredentials({ refresh_token: GOOGLE_REFRESH_TOKEN });
+  const tokenResponse = await oauth2Client.getAccessToken();
+  return tokenResponse?.token || "";
+};
 
 const BRAND = {
   name: "Speedway Anointed Ent",
@@ -102,13 +76,44 @@ function emailLayout({ title, intro, ctaLabel, ctaLink, body, footer }) {
 
 async function sendEmail({ to, subject, html }) {
   try {
-    const transporter = await createTransporter();
-    if (!transporter) return;
-    await transporter.sendMail({
-      from: `"Speedway Anointed Ent" <${GMAIL_USER}>`,
-      to,
-      subject,
-      html
+    if (!canSendEmail() || !to) return;
+
+    const oauth2Client = new google.auth.OAuth2(
+      GOOGLE_CLIENT_ID,
+      GOOGLE_CLIENT_SECRET,
+      OAUTH_REDIRECT_URI
+    );
+    oauth2Client.setCredentials({ refresh_token: GOOGLE_REFRESH_TOKEN });
+    const accessToken = await getAccessToken();
+    if (!accessToken) return;
+
+    oauth2Client.setCredentials({
+      refresh_token: GOOGLE_REFRESH_TOKEN,
+      access_token: accessToken
+    });
+
+    const gmail = google.gmail({ version: "v1", auth: oauth2Client });
+    const copyEmails = getCopyEmails(to);
+    const lines = [
+      `From: Speedway Anointed Ent <${GMAIL_USER}>`,
+      `To: ${to}`,
+      ...(copyEmails.length ? [`Bcc: ${copyEmails.join(", ")}`] : []),
+      `Subject: ${subject}`,
+      "MIME-Version: 1.0",
+      'Content-Type: text/html; charset="UTF-8"',
+      "",
+      html || ""
+    ];
+
+    const raw = Buffer.from(lines.join("\n"))
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+
+    await gmail.users.messages.send({
+      userId: "me",
+      requestBody: { raw }
     });
   } catch (err) {
     console.error("[email] Failed to send email", err);
@@ -126,7 +131,7 @@ export async function sendWelcomeEmail(to, name) {
       ctaLink: `${BRAND.website}/shop`,
       body:
         "<p style='margin:0;'>Your account is ready. Explore genuine parts, check fitment, and place orders with confidence.</p>",
-      footer: "Youâ€™re receiving this email because you created an account."
+      footer: "You're receiving this email because you created an account."
     })
   });
 }
@@ -141,7 +146,7 @@ export async function sendLoginAlert(to) {
       ctaLabel: "Reset password",
       ctaLink: `${BRAND.website}/forgot-password`,
       body:
-        "<p style='margin:0;'>If this wasnâ€™t you, reset your password immediately to secure your account.</p>",
+        "<p style='margin:0;'>If this wasn't you, reset your password immediately to secure your account.</p>",
       footer: "If you recognize this activity, no further action is needed."
     })
   });
@@ -182,7 +187,7 @@ export async function sendPasswordResetEmail(to, resetLink) {
         "We received a request to reset your password. Click the button below to continue.",
       ctaLabel: "Reset password",
       ctaLink: resetLink,
-      footer: "If you didnâ€™t request this, you can ignore this email."
+      footer: "If you didn't request this, you can ignore this email."
     })
   });
 }
@@ -193,8 +198,7 @@ export async function sendEmailConfirmation(to, confirmLink) {
     subject: "Confirm your email",
     html: emailLayout({
       title: "Confirm your email",
-      intro:
-        "Please confirm your email address to activate your account.",
+      intro: "Please confirm your email address to activate your account.",
       ctaLabel: "Confirm email",
       ctaLink: confirmLink,
       footer: "This link expires in 24 hours."
@@ -208,9 +212,10 @@ export async function sendTestEmail(to) {
     subject: "Speedway Anointed Ent test email",
     html: emailLayout({
       title: "Test email",
-      intro: "This is a test email to confirm SMTP is working.",
+      intro: "This is a test email to confirm Gmail API is working.",
       footer: "If you received this, your email configuration is correct."
     })
   });
 }
 
+export { canSendEmail };
