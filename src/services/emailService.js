@@ -39,7 +39,10 @@ async function createTransporter() {
       clientSecret: GOOGLE_CLIENT_SECRET,
       refreshToken: GOOGLE_REFRESH_TOKEN,
       accessToken: accessToken?.token
-    }
+    },
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 10000
   });
 }
 
@@ -178,6 +181,18 @@ export async function sendEmailConfirmation(to, confirmLink) {
       ctaLabel: "Confirm email",
       ctaLink: confirmLink,
       footer: "This link expires in 24 hours."
+    })
+  });
+}
+
+export async function sendTestEmail(to) {
+  await sendEmail({
+    to,
+    subject: "Speedway Anointed Ent test email",
+    html: emailLayout({
+      title: "Test email",
+      intro: "This is a test email to confirm SMTP is working.",
+      footer: "If you received this, your email configuration is correct."
     })
   });
 }
