@@ -1,0 +1,57 @@
+﻿import express from "express";
+import { z } from "zod";
+import { supabaseAdmin } from "../services/supabaseClient.js";
+import { authMiddleware } from "../middleware/auth.js";
+
+export const salesRouter = express.Router();
+
+const saleSchema = z.object({
+  product_id: z.string(),
+  quantity: z.number().int().positive(),
+  price: z.number().positive(),
+  note: z.string().optional().nullable()
+});
+
+// Admin: record in-store sale
+salesRouter.post("/", authMiddleware("admin"), async (req, res) => {
+  try {
+    const payload = saleSchema.parse(req.body);
+    const total = payload.quantity * payload.price;
+
+    const { data: sale, error } = await supabaseAdmin
+      .from("sales")
+      .insert({
+        product_id: payload.product_id,
+        quantity: payload.quantity,
+        price: payload.price,
+        total,
+        note: payload.note
+      })
+      .select("*")
+      .single();
+    if (error) throw error;
+
+    // Decrement stock and log inventory
+    await supabaseAdmin.rpc("decrement_stock_and_log", {
+      p_product_id: payload.product_id,
+      p_quantity: payload.quantity,
+      p_reason: "shop_sale",
+      p_reference: sale.id.toString()
+    });
+
+    res.status(201).json(sale);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Admin: list sales
+salesRouter.get("/", authMiddleware("admin"), async (_req, res) => {
+  const { data, error } = await supabaseAdmin
+    .from("sales")
+    .select("*, products(name)")
+    .order("created_at", { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
