@@ -68,10 +68,14 @@ ordersRouter.post("/", authMiddleware(), async (req, res) => {
       .eq("id", userId)
       .single();
     if (userProfile?.email) {
-      await sendOrderConfirmation(userProfile.email, order.id, total);
+      sendOrderConfirmation(userProfile.email, order.id, total).catch((err) =>
+        console.error("[email] order confirmation failed", err)
+      );
     }
     // Notify shop owner/admin as well
-    await sendAdminOrderNotification(order.id, total);
+    sendAdminOrderNotification(order.id, total).catch((err) =>
+      console.error("[email] admin notification failed", err)
+    );
 
     res.status(201).json({ order_id: order.id });
   } catch (err) {
@@ -122,7 +126,9 @@ ordersRouter.patch("/:id/status", authMiddleware("admin"), async (req, res) => {
       .eq("id", data.user_id)
       .single();
     if (userProfile?.email) {
-      await sendOrderStatusEmail(userProfile.email, data.id, status);
+      sendOrderStatusEmail(userProfile.email, data.id, status).catch((err) =>
+        console.error("[email] status email failed", err)
+      );
     }
   }
 

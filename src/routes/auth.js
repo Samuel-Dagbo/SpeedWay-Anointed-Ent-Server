@@ -60,8 +60,12 @@ authRouter.post("/signup", async (req, res, next) => {
     );
     const verifyLink = `${process.env.FRONTEND_URL}/verify-email?token=${verifyToken}`;
 
-    await sendEmailConfirmation(email, verifyLink);
-    await sendWelcomeEmail(email, full_name);
+    sendEmailConfirmation(email, verifyLink).catch((err) =>
+      console.error("[email] verify failed", err)
+    );
+    sendWelcomeEmail(email, full_name).catch((err) =>
+      console.error("[email] welcome failed", err)
+    );
 
     const token = generateToken({
       id: createdUser.id,
@@ -104,7 +108,9 @@ authRouter.post("/login", async (req, res, next) => {
       return res.status(403).json({ error: "Please verify your email first." });
     }
 
-    await sendLoginAlert(email);
+    sendLoginAlert(email).catch((err) =>
+      console.error("[email] login alert failed", err)
+    );
 
     const token = generateToken({
       id: profile.id,
@@ -143,7 +149,9 @@ authRouter.post("/forgot-password", async (req, res, next) => {
         { expiresIn: "30m" }
       );
       const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
-      await sendPasswordResetEmail(email, resetLink);
+      sendPasswordResetEmail(email, resetLink).catch((err) =>
+        console.error("[email] reset failed", err)
+      );
     }
     res.json({ message: "If that email exists, a reset link was sent." });
   } catch (err) {
