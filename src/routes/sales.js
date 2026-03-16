@@ -2,6 +2,7 @@
 import { z } from "zod";
 import { supabaseAdmin } from "../services/supabaseClient.js";
 import { authMiddleware } from "../middleware/auth.js";
+import { logAudit } from "../services/audit.js";
 
 export const salesRouter = express.Router();
 
@@ -13,7 +14,7 @@ const saleSchema = z.object({
 });
 
 // Admin: record in-store sale
-salesRouter.post("/", authMiddleware("admin"), async (req, res) => {
+salesRouter.post("/", authMiddleware(["admin", "manager", "staff"]), async (req, res) => {
   try {
     const payload = saleSchema.parse(req.body);
     const total = payload.quantity * payload.price;
@@ -40,13 +41,20 @@ salesRouter.post("/", authMiddleware("admin"), async (req, res) => {
     });
 
     res.status(201).json(sale);
+    logAudit({
+      actor_id: req.user.id,
+      action: "create",
+      entity: "sale",
+      entity_id: sale.id,
+      metadata: { total: sale.total }
+    });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
 // Admin: list sales
-salesRouter.get("/", authMiddleware("admin"), async (_req, res) => {
+salesRouter.get("/", authMiddleware(["admin", "manager", "staff"]), async (_req, res) => {
   const { data, error } = await supabaseAdmin
     .from("sales")
     .select("*, products(name)")

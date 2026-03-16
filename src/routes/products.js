@@ -5,6 +5,7 @@ import sharp from "sharp";
 import crypto from "crypto";
 import { supabaseAdmin } from "../services/supabaseClient.js";
 import { authMiddleware } from "../middleware/auth.js";
+import { logAudit } from "../services/audit.js";
 
 export const productsRouter = express.Router();
 
@@ -61,16 +62,175 @@ async function uploadProductImage(file, folder = "products") {
   return data.publicUrl;
 }
 
-productsRouter.get("/", async (_req, res) => {
-  const { data, error } = await supabaseAdmin
+async function getOrCreateByName(table, name, extra = {}) {
+  if (!name) return null;
+  const { data: existing } = await supabaseAdmin
+    .from(table)
+    .select("*")
+    .eq("name", name)
+    .maybeSingle();
+  if (existing) return existing;
+  const { data: created } = await supabaseAdmin
+    .from(table)
+    .insert({ name, ...extra })
+    .select("*")
+    .single();
+  return created;
+}
+
+function parseCsv(raw) {
+  const rows = String(raw || "")
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean);
+  if (rows.length === 0) return [];
+  const header = rows[0].split(",").map((h) => h.trim().toLowerCase());
+  return rows.slice(1).map((row) => {
+    const values = row.split(",").map((v) => v.trim());
+    const entry = {};
+    header.forEach((key, idx) => {
+      entry[key] = values[idx] ?? "";
+    });
+    return entry;
+  });
+}
+
+productsRouter.get("/", async (req, res) => {
+  const { q, brand_id, model_id, year_id, category_id, status } = req.query;
+  let query = supabaseAdmin
     .from("products")
     .select(
       "*, categories(name), brands(name), models(name), years(label)"
     )
+    .eq("is_deleted", false);
+
+  if (q) {
+    query = query.ilike("name", `%${q}%`);
+  }
+  if (brand_id) {
+    query = query.eq("brand_id", brand_id);
+  }
+  if (model_id) {
+    query = query.eq("model_id", model_id);
+  }
+  if (year_id) {
+    query = query.eq("year_id", year_id);
+  }
+  if (category_id) {
+    query = query.eq("category_id", category_id);
+  }
+  if (status) {
+    query = query.eq("status", status);
+  }
+
+  const { data, error } = await query.order("created_at", { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+productsRouter.get("/export", authMiddleware("admin"), async (_req, res) => {
+  const { data, error } = await supabaseAdmin
+    .from("products")
+    .select("name, price, cost_price, quantity, description, image_url, car_image_url, status, categories(name), brands(name), models(name), years(label)")
     .eq("is_deleted", false)
     .order("created_at", { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  const header = [
+    "name",
+    "category",
+    "brand",
+    "model",
+    "year",
+    "price",
+    "cost_price",
+    "quantity",
+    "description",
+    "image_url",
+    "car_image_url",
+    "status"
+  ];
+  const lines = [header.join(",")];
+  (data || []).forEach((p) => {
+    const row = [
+      p.name,
+      p.categories?.name || "",
+      p.brands?.name || "",
+      p.models?.name || "",
+      p.years?.label || "",
+      p.price,
+      p.cost_price || "",
+      p.quantity,
+      (p.description || "").replace(/\n/g, " "),
+      p.image_url || "",
+      p.car_image_url || "",
+      p.status
+    ];
+    lines.push(row.join(","));
+  });
+  res.setHeader("Content-Type", "text/csv");
+  res.send(lines.join("\n"));
+});
+
+productsRouter.post("/import", authMiddleware("admin"), async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body?.items)
+      ? req.body.items
+      : parseCsv(req.body?.csv || "");
+    if (!rows.length) return res.status(400).json({ error: "No rows to import" });
+
+    const created = [];
+    for (const row of rows) {
+      const category = row.category
+        ? await getOrCreateByName("categories", row.category)
+        : null;
+      const brand = row.brand ? await getOrCreateByName("brands", row.brand) : null;
+      let model = null;
+      if (row.model && brand?.id) {
+        const { data: existing } = await supabaseAdmin
+          .from("models")
+          .select("*")
+          .eq("name", row.model)
+          .eq("brand_id", brand.id)
+          .maybeSingle();
+        model =
+          existing ||
+          (await supabaseAdmin
+            .from("models")
+            .insert({ name: row.model, brand_id: brand.id })
+            .select("*")
+            .single()).data;
+      }
+      const year = row.year
+        ? await supabaseAdmin.from("years").select("*").eq("label", row.year).maybeSingle()
+        : null;
+      const yearData = year?.data || null;
+      const payload = {
+        name: row.name,
+        category_id: category?.id || null,
+        brand_id: brand?.id || null,
+        model_id: model?.id || null,
+        year_id: yearData?.id || null,
+        price: Number(row.price || 0),
+        cost_price: row.cost_price ? Number(row.cost_price) : null,
+        quantity: Number(row.quantity || 0),
+        description: row.description || null,
+        image_url: row.image_url || null,
+        car_image_url: row.car_image_url || null,
+        status: row.status || "active"
+      };
+      const { data, error } = await supabaseAdmin
+        .from("products")
+        .insert(payload)
+        .select("*")
+        .single();
+      if (error) throw error;
+      created.push(data);
+    }
+
+    res.status(201).json({ count: created.length });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 productsRouter.get("/:id", async (req, res) => {
@@ -86,7 +246,7 @@ productsRouter.get("/:id", async (req, res) => {
   res.json(data);
 });
 
-productsRouter.post("/", authMiddleware("admin"), maybeUpload, async (req, res) => {
+productsRouter.post("/", authMiddleware(["admin", "manager"]), maybeUpload, async (req, res) => {
   try {
     const raw = req.body;
     const payload = productSchema.parse(raw);
@@ -105,13 +265,20 @@ productsRouter.post("/", authMiddleware("admin"), maybeUpload, async (req, res) 
       .select("*")
       .single();
     if (error) return res.status(400).json({ error: error.message });
+    logAudit({
+      actor_id: req.user.id,
+      action: "create",
+      entity: "product",
+      entity_id: data.id,
+      metadata: { name: data.name }
+    });
     res.status(201).json(data);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-productsRouter.put("/:id", authMiddleware("admin"), maybeUpload, async (req, res) => {
+productsRouter.put("/:id", authMiddleware(["admin", "manager"]), maybeUpload, async (req, res) => {
   try {
     const payload = productSchema.partial().parse(req.body);
     const files = req.files || {};
@@ -130,18 +297,31 @@ productsRouter.put("/:id", authMiddleware("admin"), maybeUpload, async (req, res
       .select("*")
       .single();
     if (error) return res.status(400).json({ error: error.message });
+    logAudit({
+      actor_id: req.user.id,
+      action: "update",
+      entity: "product",
+      entity_id: data.id,
+      metadata: { name: data.name }
+    });
     res.json(data);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-productsRouter.delete("/:id", authMiddleware("admin"), async (req, res) => {
+productsRouter.delete("/:id", authMiddleware(["admin", "manager"]), async (req, res) => {
   const { error } = await supabaseAdmin
     .from("products")
     .update({ is_deleted: true })
     .eq("id", req.params.id);
   if (error) return res.status(400).json({ error: error.message });
+  logAudit({
+    actor_id: req.user.id,
+    action: "delete",
+    entity: "product",
+    entity_id: req.params.id
+  });
   res.status(204).send();
 });
 

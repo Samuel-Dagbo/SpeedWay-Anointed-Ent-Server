@@ -17,7 +17,7 @@ const signupSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
   full_name: z.string().min(1),
-  role: z.enum(["admin", "customer"]).optional().default("customer")
+  role: z.enum(["admin", "manager", "staff", "customer"]).optional().default("customer")
 });
 
 const loginSchema = z.object({

@@ -40,7 +40,7 @@ async function aggregateSales(from, to) {
 
 reportsRouter.get(
   "/summary",
-  authMiddleware("admin"),
+  authMiddleware(["admin", "manager", "staff"]),
   async (_req, res) => {
     try {
       const now = new Date();
@@ -71,7 +71,7 @@ reportsRouter.get(
 
 reportsRouter.post(
   "/range",
-  authMiddleware("admin"),
+  authMiddleware(["admin", "manager", "staff"]),
   async (req, res) => {
     try {
       const { from, to } = rangeSchema.parse(req.body);
@@ -79,6 +79,109 @@ reportsRouter.post(
       res.json(data);
     } catch (err) {
       res.status(400).json({ error: err.message });
+    }
+  }
+);
+
+reportsRouter.get("/sales/daily", authMiddleware(["admin", "manager", "staff"]), async (_req, res) => {
+  try {
+    const { data: sales, error } = await supabaseAdmin
+      .from("sales")
+      .select("total, quantity, created_at");
+    if (error) throw error;
+
+    const bucket = new Map();
+    (sales || []).forEach((s) => {
+      const date = new Date(s.created_at);
+      const key = date.toISOString().slice(0, 10);
+      const current = bucket.get(key) || { total: 0, quantity: 0 };
+      bucket.set(key, {
+        total: current.total + Number(s.total || 0),
+        quantity: current.quantity + Number(s.quantity || 0)
+      });
+    });
+
+    const rows = Array.from(bucket.entries())
+      .map(([date, value]) => ({ date, ...value }))
+      .sort((a, b) => b.date.localeCompare(a.date));
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+reportsRouter.get(
+  "/sales/products",
+  authMiddleware(["admin", "manager", "staff"]),
+  async (_req, res) => {
+    try {
+      const { data: sales, error } = await supabaseAdmin
+        .from("sales")
+        .select("total, quantity, product_id, products(name)");
+      if (error) throw error;
+
+      const bucket = new Map();
+      (sales || []).forEach((s) => {
+        const key = s.product_id;
+        const current = bucket.get(key) || {
+          product_id: key,
+          name: s.products?.name || "Unknown",
+          total: 0,
+          quantity: 0
+        };
+        bucket.set(key, {
+          ...current,
+          total: current.total + Number(s.total || 0),
+          quantity: current.quantity + Number(s.quantity || 0)
+        });
+      });
+
+      const rows = Array.from(bucket.values()).sort((a, b) => b.total - a.total);
+      res.json(rows);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+reportsRouter.get(
+  "/customers/insights",
+  authMiddleware(["admin", "manager", "staff"]),
+  async (_req, res) => {
+    try {
+      const { data: orders, error } = await supabaseAdmin
+        .from("orders")
+        .select("id, total, user_id, users(full_name, email)")
+        .eq("status", "completed");
+      if (error) throw error;
+
+      const bucket = new Map();
+      (orders || []).forEach((o) => {
+        const key = o.user_id || "guest";
+        const current = bucket.get(key) || {
+          user_id: o.user_id,
+          name: o.users?.full_name || "Guest",
+          email: o.users?.email || "",
+          order_count: 0,
+          total_spent: 0
+        };
+        bucket.set(key, {
+          ...current,
+          order_count: current.order_count + 1,
+          total_spent: current.total_spent + Number(o.total || 0)
+        });
+      });
+
+      const rows = Array.from(bucket.values()).sort((a, b) => b.total_spent - a.total_spent);
+      const avgOrderValue =
+        rows.length === 0
+          ? 0
+          : rows.reduce((sum, r) => sum + r.total_spent, 0) /
+            rows.reduce((sum, r) => sum + r.order_count, 0);
+
+      res.json({ customers: rows, avgOrderValue: Number(avgOrderValue.toFixed(2)) });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
     }
   }
 );

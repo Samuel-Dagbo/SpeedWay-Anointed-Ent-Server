@@ -15,8 +15,13 @@ export function authMiddleware(requiredRole = null) {
     const token = authHeader.split(" ")[1];
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
-      if (requiredRole && decoded.role !== requiredRole) {
-        return res.status(403).json({ error: "Forbidden" });
+      if (requiredRole) {
+        const allowed = Array.isArray(requiredRole)
+          ? requiredRole
+          : [requiredRole];
+        if (!allowed.includes(decoded.role)) {
+          return res.status(403).json({ error: "Forbidden" });
+        }
       }
       req.user = decoded;
       next();

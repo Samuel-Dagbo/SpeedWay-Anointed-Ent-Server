@@ -20,6 +20,14 @@ import { yearsRouter } from "./routes/years.js";
 import { reviewsRouter } from "./routes/reviews.js";
 import { emailRouter } from "./routes/email.js";
 import { settingsRouter } from "./routes/settings.js";
+import { addressesRouter } from "./routes/addresses.js";
+import { wishlistRouter } from "./routes/wishlist.js";
+import { cartRouter } from "./routes/cart.js";
+import { couponsRouter } from "./routes/coupons.js";
+import { notificationsRouter } from "./routes/notifications.js";
+import { inventoryRouter } from "./routes/inventory.js";
+import { stockSubscriptionsRouter } from "./routes/stockSubscriptions.js";
+import { auditLogsRouter } from "./routes/auditLogs.js";
 
 const app = express();
 
@@ -46,6 +54,14 @@ app.use("/years", yearsRouter);
 app.use("/reviews", reviewsRouter);
 app.use("/email", emailRouter);
 app.use("/settings", settingsRouter);
+app.use("/addresses", addressesRouter);
+app.use("/wishlist", wishlistRouter);
+app.use("/cart", cartRouter);
+app.use("/coupons", couponsRouter);
+app.use("/notifications", notificationsRouter);
+app.use("/inventory", inventoryRouter);
+app.use("/stock-subscriptions", stockSubscriptionsRouter);
+app.use("/audit-logs", auditLogsRouter);
 
 // Generic error handler
 app.use((err, _req, res, _next) => {
