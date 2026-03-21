@@ -6,8 +6,7 @@ import { authMiddleware } from "../middleware/auth.js";
 export const brandsRouter = express.Router();
 
 const brandSchema = z.object({
-  name: z.string(),
-  years: z.array(z.string()).optional().default([])
+  name: z.string()
 });
 
 brandsRouter.get("/", async (_req, res) => {

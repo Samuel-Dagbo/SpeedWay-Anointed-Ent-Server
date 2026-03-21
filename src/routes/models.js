@@ -7,7 +7,8 @@ export const modelsRouter = express.Router();
 
 const modelSchema = z.object({
   name: z.string(),
-  brand_id: z.string()
+  brand_id: z.string(),
+  years: z.array(z.string()).optional().default([])
 });
 
 modelsRouter.get("/", async (_req, res) => {
