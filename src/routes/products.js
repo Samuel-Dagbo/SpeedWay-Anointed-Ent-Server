@@ -96,11 +96,17 @@ function parseCsv(raw) {
 }
 
 productsRouter.get("/", async (req, res) => {
-  const { q, brand_id, model_id, year_id, category_id, status } = req.query;
+  const { q, brand_id, model_id, year_id, category_id, status, page = 1, limit = 20 } = req.query;
+  
+  const pageNum = Math.max(1, parseInt(page) || 1);
+  const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 20));
+  const offset = (pageNum - 1) * limitNum;
+  
   let query = supabaseAdmin
     .from("products")
     .select(
-      "*, categories(name), brands(name), models(name), years(label)"
+      "*, categories(name), brands(name), models(name), years(label)",
+      { count: "exact" }
     )
     .eq("is_deleted", false);
 
@@ -123,9 +129,46 @@ productsRouter.get("/", async (req, res) => {
     query = query.eq("status", status);
   }
 
-  const { data, error } = await query.order("created_at", { ascending: false });
+  const { data, error, count } = await query
+    .order("created_at", { ascending: false })
+    .range(offset, offset + limitNum - 1);
+    
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  
+  res.json({
+    data,
+    pagination: {
+      page: pageNum,
+      limit: limitNum,
+      total: count || 0,
+      totalPages: Math.ceil((count || 0) / limitNum)
+    }
+  });
+});
+
+// Get products count by category
+productsRouter.get("/by-category", async (req, res) => {
+  const { data: categories } = await supabaseAdmin
+    .from("categories")
+    .select("id, name");
+  
+  if (!categories) return res.json([]);
+  
+  const result = await Promise.all(
+    categories.map(async (cat) => {
+      const { count } = await supabaseAdmin
+        .from("products")
+        .select("*", { count: "exact", head: true })
+        .eq("category_id", cat.id)
+        .eq("is_deleted", false);
+      return {
+        ...cat,
+        product_count: count || 0
+      };
+    })
+  );
+  
+  res.json(result);
 });
 
 productsRouter.get("/export", authMiddleware("admin"), async (_req, res) => {
