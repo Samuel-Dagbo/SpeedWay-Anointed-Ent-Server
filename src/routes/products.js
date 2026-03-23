@@ -7,6 +7,7 @@ import { supabaseAdmin } from "../services/supabaseClient.js";
 import { authMiddleware } from "../middleware/auth.js";
 import { logAudit } from "../services/audit.js";
 import { getCached, setCache, clearCache } from "../server.js";
+import { generateProductImage, generateSearchKeywords } from "../services/gemini.js";
 
 export const productsRouter = express.Router();
 
@@ -382,10 +383,6 @@ productsRouter.delete("/:id", authMiddleware(["admin", "manager"]), async (req, 
   clearCache("categories");
   res.status(204).send();
 });
-
-import { generateProductImage, generateSearchKeywords } from "../services/gemini.js";
-import crypto from "crypto";
-import sharp from "sharp";
 
 productsRouter.post("/generate-image/:id", authMiddleware(["admin", "manager"]), async (req, res) => {
   try {
