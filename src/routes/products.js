@@ -155,38 +155,43 @@ productsRouter.get("/", async (req, res) => {
   res.json(result);
 });
 
-// Get products count by category - optimized single query
+// Get products count by category
 productsRouter.get("/by-category", async (req, res) => {
   const cacheKey = "categories_with_counts";
   const cached = getCached(cacheKey);
   if (cached) return res.json(cached);
   
-  const { data: categories, error } = await supabaseAdmin
-    .from("categories")
-    .select("id, name, image_url");
-  
-  if (error) return res.status(500).json({ error: error.message });
-  
-  const { data: counts } = await supabaseAdmin
-    .from("products")
-    .select("category_id, count");
-  
-  const countMap = {};
-  (counts || []).forEach((p) => {
-    if (p.category_id) {
-      countMap[p.category_id] = (countMap[p.category_id] || 0) + 1;
-    }
-  });
-  
-  const result = (categories || []).map(cat => ({
-    id: cat.id,
-    name: cat.name,
-    image_url: cat.image_url,
-    product_count: countMap[cat.id] || 0
-  }));
-  
-  setCache(cacheKey, result, 60000);
-  res.json(result);
+  try {
+    const { data: categories, error } = await supabaseAdmin
+      .from("categories")
+      .select("id, name, image_url");
+    
+    if (error) throw error;
+    
+    const { data: products } = await supabaseAdmin
+      .from("products")
+      .select("category_id");
+    
+    const countMap = {};
+    (products || []).forEach((p) => {
+      if (p.category_id) {
+        countMap[p.category_id] = (countMap[p.category_id] || 0) + 1;
+      }
+    });
+    
+    const result = (categories || []).map((cat) => ({
+      id: cat.id,
+      name: cat.name,
+      image_url: cat.image_url,
+      product_count: countMap[cat.id] || 0
+    }));
+    
+    setCache(cacheKey, result, 60000);
+    res.json(result);
+  } catch (err) {
+    console.error("by-category error:", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 productsRouter.get("/export", authMiddleware("admin"), async (_req, res) => {
