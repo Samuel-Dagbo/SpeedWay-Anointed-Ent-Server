@@ -8,7 +8,7 @@ export const categoriesRouter = express.Router();
 
 const categorySchema = z.object({
   name: z.string(),
-  image_url: z.string().optional()
+  image_url: z.string().nullable()
 });
 
 categoriesRouter.get("/", async (_req, res) => {

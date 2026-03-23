@@ -10,7 +10,7 @@ const modelSchema = z.object({
   name: z.string(),
   brand_id: z.string(),
   years: z.array(z.string()).optional().default([]),
-  image_url: z.string().optional()
+  image_url: z.string().nullable()
 });
 
 modelsRouter.get("/", async (_req, res) => {

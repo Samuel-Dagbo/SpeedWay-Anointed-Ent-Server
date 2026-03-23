@@ -8,7 +8,7 @@ export const brandsRouter = express.Router();
 
 const brandSchema = z.object({
   name: z.string(),
-  logo_url: z.string().optional()
+  logo_url: z.string().nullable()
 });
 
 brandsRouter.get("/", async (_req, res) => {
