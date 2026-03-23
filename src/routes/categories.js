@@ -26,6 +26,17 @@ categoriesRouter.get("/", async (_req, res) => {
   res.json(data);
 });
 
+categoriesRouter.get("/:id", async (req, res) => {
+  const { data, error } = await supabaseAdmin
+    .from("categories")
+    .select("*")
+    .eq("id", req.params.id)
+    .maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: "Category not found" });
+  res.json(data);
+});
+
 categoriesRouter.post("/", authMiddleware("admin"), async (req, res) => {
   try {
     const payload = categorySchema.parse(req.body);

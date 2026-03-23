@@ -28,6 +28,17 @@ modelsRouter.get("/", async (_req, res) => {
   res.json(data);
 });
 
+modelsRouter.get("/:id", async (req, res) => {
+  const { data, error } = await supabaseAdmin
+    .from("models")
+    .select("*, brands(name)")
+    .eq("id", req.params.id)
+    .maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: "Model not found" });
+  res.json(data);
+});
+
 modelsRouter.post("/", authMiddleware("admin"), async (req, res) => {
   try {
     const payload = modelSchema.parse(req.body);

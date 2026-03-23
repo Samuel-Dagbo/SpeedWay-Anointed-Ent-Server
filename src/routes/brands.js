@@ -26,6 +26,17 @@ brandsRouter.get("/", async (_req, res) => {
   res.json(data);
 });
 
+brandsRouter.get("/:id", async (req, res) => {
+  const { data, error } = await supabaseAdmin
+    .from("brands")
+    .select("*")
+    .eq("id", req.params.id)
+    .maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: "Brand not found" });
+  res.json(data);
+});
+
 brandsRouter.post("/", authMiddleware("admin"), async (req, res) => {
   try {
     const payload = brandSchema.parse(req.body);
