@@ -166,6 +166,7 @@ productsRouter.get("/by-category", async (req, res) => {
     .select(`
       id,
       name,
+      image_url,
       products:products(count)
     `);
   
@@ -174,6 +175,7 @@ productsRouter.get("/by-category", async (req, res) => {
   const result = (data || []).map(cat => ({
     id: cat.id,
     name: cat.name,
+    image_url: cat.image_url,
     product_count: cat.products?.[0]?.count || 0
   }));
   
