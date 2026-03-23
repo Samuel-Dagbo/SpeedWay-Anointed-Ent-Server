@@ -7,7 +7,8 @@ import { getCached, setCache, clearCache } from "../server.js";
 export const categoriesRouter = express.Router();
 
 const categorySchema = z.object({
-  name: z.string()
+  name: z.string(),
+  image_url: z.string().optional()
 });
 
 categoriesRouter.get("/", async (_req, res) => {

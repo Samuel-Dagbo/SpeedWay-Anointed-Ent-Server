@@ -383,3 +383,93 @@ productsRouter.delete("/:id", authMiddleware(["admin", "manager"]), async (req, 
   res.status(204).send();
 });
 
+import { generateProductImage, generateSearchKeywords } from "../services/gemini.js";
+import crypto from "crypto";
+import sharp from "sharp";
+
+productsRouter.post("/generate-image/:id", authMiddleware(["admin", "manager"]), async (req, res) => {
+  try {
+    const { data: product } = await supabaseAdmin
+      .from("products")
+      .select("*, categories(name), brands(name), models(name), years(label)")
+      .eq("id", req.params.id)
+      .single();
+
+    if (!product) {
+      return res.status(404).json({ error: "Product not found" });
+    }
+
+    const prompt = `${product.brands?.name || ""} ${product.models?.name || ""} ${product.years?.label || ""} ${product.name} ${product.categories?.name || ""}`.trim();
+
+    const result = await generateProductImage(prompt);
+
+    let imageUrl;
+    if (result.imageData) {
+      const buffer = Buffer.from(result.imageData, "base64");
+      const processed = await sharp(buffer)
+        .resize({ width: 1200, height: 800, fit: "cover" })
+        .jpeg({ quality: 85 })
+        .toBuffer();
+
+      const filename = `product-images/${crypto.randomUUID()}.jpg`;
+      const { error: uploadError } = await supabaseAdmin.storage
+        .from(process.env.SUPABASE_STORAGE_BUCKET || "product-images")
+        .upload(filename, processed, { contentType: "image/jpeg", upsert: true });
+
+      if (uploadError) throw new Error("Failed to upload image");
+
+      const { data: urlData } = supabaseAdmin.storage
+        .from(process.env.SUPABASE_STORAGE_BUCKET || "product-images")
+        .getPublicUrl(filename);
+      imageUrl = urlData.publicUrl;
+    } else if (result.externalUrl) {
+      const downloadRes = await fetch(result.externalUrl, { headers: { "User-Agent": "SpeedwayApp/1.0" } });
+      if (!downloadRes.ok) throw new Error("Failed to download external image");
+      const buffer = Buffer.from(await downloadRes.arrayBuffer());
+      const processed = await sharp(buffer).resize({ width: 1200, height: 800, fit: "cover" }).jpeg({ quality: 85 }).toBuffer();
+      
+      const filename = `product-images/${crypto.randomUUID()}.jpg`;
+      await supabaseAdmin.storage.from(process.env.SUPABASE_STORAGE_BUCKET || "product-images").upload(filename, processed, { contentType: "image/jpeg", upsert: true });
+      const { data: urlData } = supabaseAdmin.storage.from(process.env.SUPABASE_STORAGE_BUCKET || "product-images").getPublicUrl(filename);
+      imageUrl = urlData.publicUrl;
+    }
+
+    if (imageUrl) {
+      await supabaseAdmin.from("products").update({ image_url: imageUrl }).eq("id", req.params.id);
+      clearCache("products");
+      res.json({ success: true, imageUrl });
+    } else {
+      res.status(500).json({ error: "Failed to generate image" });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+productsRouter.post("/generate-keywords/:id", authMiddleware(["admin", "manager"]), async (req, res) => {
+  try {
+    const { data: product } = await supabaseAdmin
+      .from("products")
+      .select("*, categories(name), brands(name), models(name), years(label)")
+      .eq("id", req.params.id)
+      .single();
+
+    if (!product) {
+      return res.status(404).json({ error: "Product not found" });
+    }
+
+    const keywords = await generateSearchKeywords({
+      name: product.name,
+      description: product.description,
+      brand: product.brands?.name,
+      model: product.models?.name,
+      year: product.years?.label,
+      category: product.categories?.name
+    });
+
+    res.json({ keywords });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
