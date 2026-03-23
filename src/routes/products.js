@@ -161,22 +161,28 @@ productsRouter.get("/by-category", async (req, res) => {
   const cached = getCached(cacheKey);
   if (cached) return res.json(cached);
   
-  const { data, error } = await supabaseAdmin
+  const { data: categories, error } = await supabaseAdmin
     .from("categories")
-    .select(`
-      id,
-      name,
-      image_url,
-      products:products(count)
-    `);
+    .select("id, name, image_url");
   
   if (error) return res.status(500).json({ error: error.message });
   
-  const result = (data || []).map(cat => ({
+  const { data: counts } = await supabaseAdmin
+    .from("products")
+    .select("category_id, count");
+  
+  const countMap = {};
+  (counts || []).forEach((p) => {
+    if (p.category_id) {
+      countMap[p.category_id] = (countMap[p.category_id] || 0) + 1;
+    }
+  });
+  
+  const result = (categories || []).map(cat => ({
     id: cat.id,
     name: cat.name,
     image_url: cat.image_url,
-    product_count: cat.products?.[0]?.count || 0
+    product_count: countMap[cat.id] || 0
   }));
   
   setCache(cacheKey, result, 60000);
