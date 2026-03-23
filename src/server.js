@@ -6,6 +6,40 @@ import cors from "cors";
 import helmet from "helmet";
 import compression from "compression";
 import morgan from "morgan";
+import { createClient } from "@supabase/supabase-js";
+
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+const CACHE_TTL = 30000;
+const cache = new Map();
+
+function getCached(key) {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expires) { cache.delete(key); return null; }
+  return entry.data;
+}
+
+function setCache(key, data, ttl = CACHE_TTL) {
+  cache.set(key, { data, expires: Date.now() + ttl });
+}
+
+function clearCache(pattern) {
+  for (const key of cache.keys()) {
+    if (key.includes(pattern)) cache.delete(key);
+  }
+}
+
+function createOptimizedClient() {
+  return createClient(supabaseUrl, supabaseKey, {
+    schema: 'public',
+    persistSession: false,
+    autoRefreshToken: false,
+  });
+}
+
+export { getCached, setCache, clearCache, createOptimizedClient };
 
 import { authRouter } from "./routes/auth.js";
 import { productsRouter } from "./routes/products.js";

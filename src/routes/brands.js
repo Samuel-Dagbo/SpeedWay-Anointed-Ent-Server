@@ -2,6 +2,7 @@
 import { z } from "zod";
 import { supabaseAdmin } from "../services/supabaseClient.js";
 import { authMiddleware } from "../middleware/auth.js";
+import { getCached, setCache, clearCache } from "../server.js";
 
 export const brandsRouter = express.Router();
 
@@ -10,11 +11,17 @@ const brandSchema = z.object({
 });
 
 brandsRouter.get("/", async (_req, res) => {
+  const cacheKey = "brands:all";
+  const cached = getCached(cacheKey);
+  if (cached) return res.json(cached);
+  
   const { data, error } = await supabaseAdmin
     .from("brands")
     .select("*")
     .order("name", { ascending: true });
   if (error) return res.status(500).json({ error: error.message });
+  
+  setCache(cacheKey, data, 120000);
   res.json(data);
 });
 
@@ -27,6 +34,7 @@ brandsRouter.post("/", authMiddleware("admin"), async (req, res) => {
       .select("*")
       .single();
     if (error) return res.status(400).json({ error: error.message });
+    clearCache("brands");
     res.status(201).json(data);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -43,6 +51,7 @@ brandsRouter.put("/:id", authMiddleware("admin"), async (req, res) => {
       .select("*")
       .single();
     if (error) return res.status(400).json({ error: error.message });
+    clearCache("brands");
     res.json(data);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -55,6 +64,7 @@ brandsRouter.delete("/:id", authMiddleware("admin"), async (req, res) => {
     .delete()
     .eq("id", req.params.id);
   if (error) return res.status(400).json({ error: error.message });
+  clearCache("brands");
   res.status(204).send();
 });
 

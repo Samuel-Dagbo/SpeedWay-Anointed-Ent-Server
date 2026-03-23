@@ -106,14 +106,27 @@ ordersRouter.post("/", authMiddleware(), async (req, res) => {
       metadata: { total: order.total }
     });
 
-    // Decrement stock and log inventory
-    for (const it of items) {
-      await supabaseAdmin.rpc("decrement_stock_and_log", {
-        p_product_id: it.product_id,
-        p_quantity: it.quantity,
-        p_reason: "online_order",
-        p_reference: order.id.toString()
-      });
+    // Decrement stock and log inventory - batch operation
+    const stockUpdates = items.map(it => ({
+      product_id: it.product_id,
+      quantity: -it.quantity,
+      reason: "online_order",
+      reference: order.id.toString()
+    }));
+    
+    const { error: stockError } = await supabaseAdmin.rpc("batch_decrement_stock", {
+      p_updates: stockUpdates
+    }).catch(() => null);
+    
+    if (stockError) {
+      for (const it of items) {
+        await supabaseAdmin.rpc("decrement_stock_and_log", {
+          p_product_id: it.product_id,
+          p_quantity: it.quantity,
+          p_reason: "online_order",
+          p_reference: order.id.toString()
+        }).catch(() => {});
+      }
     }
 
     // Email confirmation (best-effort)

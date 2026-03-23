@@ -6,6 +6,7 @@ import crypto from "crypto";
 import { supabaseAdmin } from "../services/supabaseClient.js";
 import { authMiddleware } from "../middleware/auth.js";
 import { logAudit } from "../services/audit.js";
+import { getCached, setCache, clearCache } from "../server.js";
 
 export const productsRouter = express.Router();
 
@@ -98,6 +99,10 @@ function parseCsv(raw) {
 productsRouter.get("/", async (req, res) => {
   const { q, brand_id, model_id, year_id, category_id, status, page = 1, limit = 20 } = req.query;
   
+  const cacheKey = `products:${JSON.stringify(req.query)}`;
+  const cached = getCached(cacheKey);
+  if (cached) return res.json(cached);
+  
   const pageNum = Math.max(1, parseInt(page) || 1);
   const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 20));
   const offset = (pageNum - 1) * limitNum;
@@ -135,7 +140,7 @@ productsRouter.get("/", async (req, res) => {
     
   if (error) return res.status(500).json({ error: error.message });
   
-  res.json({
+  const result = {
     data,
     pagination: {
       page: pageNum,
@@ -143,31 +148,35 @@ productsRouter.get("/", async (req, res) => {
       total: count || 0,
       totalPages: Math.ceil((count || 0) / limitNum)
     }
-  });
+  };
+  
+  setCache(cacheKey, result, q ? 5000 : 15000);
+  res.json(result);
 });
 
-// Get products count by category
+// Get products count by category - optimized single query
 productsRouter.get("/by-category", async (req, res) => {
-  const { data: categories } = await supabaseAdmin
+  const cacheKey = "categories_with_counts";
+  const cached = getCached(cacheKey);
+  if (cached) return res.json(cached);
+  
+  const { data, error } = await supabaseAdmin
     .from("categories")
-    .select("id, name");
+    .select(`
+      id,
+      name,
+      products:products(count)
+    `);
   
-  if (!categories) return res.json([]);
+  if (error) return res.status(500).json({ error: error.message });
   
-  const result = await Promise.all(
-    categories.map(async (cat) => {
-      const { count } = await supabaseAdmin
-        .from("products")
-        .select("*", { count: "exact", head: true })
-        .eq("category_id", cat.id)
-        .eq("is_deleted", false);
-      return {
-        ...cat,
-        product_count: count || 0
-      };
-    })
-  );
+  const result = (data || []).map(cat => ({
+    id: cat.id,
+    name: cat.name,
+    product_count: cat.products?.[0]?.count || 0
+  }));
   
+  setCache(cacheKey, result, 60000);
   res.json(result);
 });
 
@@ -315,6 +324,8 @@ productsRouter.post("/", authMiddleware(["admin", "manager"]), maybeUpload, asyn
       entity_id: data.id,
       metadata: { name: data.name }
     });
+    clearCache("products");
+    clearCache("categories");
     res.status(201).json(data);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -347,6 +358,8 @@ productsRouter.put("/:id", authMiddleware(["admin", "manager"]), maybeUpload, as
       entity_id: data.id,
       metadata: { name: data.name }
     });
+    clearCache("products");
+    clearCache("categories");
     res.json(data);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -365,6 +378,8 @@ productsRouter.delete("/:id", authMiddleware(["admin", "manager"]), async (req, 
     entity: "product",
     entity_id: req.params.id
   });
+  clearCache("products");
+  clearCache("categories");
   res.status(204).send();
 });
 

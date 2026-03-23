@@ -10,7 +10,9 @@
     "seed:admin": "node src/scripts/seedAdmin.js",
     "seed:sample": "node src/scripts/seedSampleData.js",
     "seed:full": "node src/scripts/seedFullProducts.js",
-    "seed:update": "node src/scripts/seedUpdateProducts.js"
+    "seed:update": "node src/scripts/seedUpdateProducts.js",
+    "update:images": "node src/scripts/updateProductImages.js",
+    "update:images:batch": "node src/scripts/batchUpdateImages.js"
   },
   "dependencies": {
     "compression": "^1.7.4",
