@@ -14,7 +14,7 @@ export const productsRouter = express.Router();
 const productSchema = z.object({
   name: z.string().min(1),
   category_id: z.string().uuid(),
-  brand_id: z.string().uuid(),
+  brand_id: z.string().uuid().nullable().optional(),
   model_id: z.string().uuid().nullable().optional(),
   year_id: z.string().uuid().nullable().optional(),
   price: z.preprocess((val) => Number(val), z.number()),
