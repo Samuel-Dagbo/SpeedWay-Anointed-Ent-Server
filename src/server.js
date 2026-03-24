@@ -7,6 +7,7 @@ import helmet from "helmet";
 import compression from "compression";
 import morgan from "morgan";
 import { createClient } from "@supabase/supabase-js";
+import { supabaseAdmin } from "./services/supabaseClient.js";
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
