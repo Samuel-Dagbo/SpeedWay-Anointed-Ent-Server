@@ -117,14 +117,17 @@ if (selfPingUrl) {
   const intervalMs = Math.max(selfPingMinutes, 1) * 60 * 1000;
   const ping = async () => {
     try {
-      await fetch(selfPingUrl, { method: "GET" });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      await fetch(selfPingUrl, { method: "GET", signal: controller.signal });
+      clearTimeout(timeoutId);
       console.log("[self-ping] ok", new Date().toISOString());
     } catch (err) {
       console.warn("[self-ping] failed:", err?.message || err);
     }
   };
 
-  ping();
   setInterval(ping, intervalMs);
+  setTimeout(ping, 5000);
 }
 
