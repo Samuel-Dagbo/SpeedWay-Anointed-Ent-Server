@@ -162,23 +162,51 @@ ordersRouter.post("/", authMiddleware(), async (req, res) => {
 
 // Customer: get own orders
 ordersRouter.get("/my", authMiddleware(), async (req, res) => {
-  const { data, error } = await supabaseAdmin
+  const { page = 1, limit = 20 } = req.query;
+  const pageNum = Math.max(1, parseInt(page) || 1);
+  const limitNum = Math.min(50, Math.max(1, parseInt(limit) || 20));
+  const offset = (pageNum - 1) * limitNum;
+
+  const { data, error, count } = await supabaseAdmin
     .from("orders")
-    .select("*, order_items(*, products(name, image_url)), order_status_events(*)")
+    .select("*, order_items(*, products(name, image_url)), order_status_events(*)", { count: "exact" })
     .eq("user_id", req.user.id)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .range(offset, offset + limitNum - 1);
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  res.json({
+    data,
+    pagination: {
+      page: pageNum,
+      limit: limitNum,
+      total: count || 0,
+      totalPages: Math.ceil((count || 0) / limitNum)
+    }
+  });
 });
 
 // Admin: list all orders
-ordersRouter.get("/", authMiddleware(["admin", "manager", "staff"]), async (_req, res) => {
-  const { data, error } = await supabaseAdmin
+ordersRouter.get("/", authMiddleware(["admin", "manager", "staff"]), async (req, res) => {
+  const { page = 1, limit = 20 } = req.query;
+  const pageNum = Math.max(1, parseInt(page) || 1);
+  const limitNum = Math.min(50, Math.max(1, parseInt(limit) || 20));
+  const offset = (pageNum - 1) * limitNum;
+
+  const { data, error, count } = await supabaseAdmin
     .from("orders")
-    .select("*, users(full_name, email)")
-    .order("created_at", { ascending: false });
+    .select("*, users(full_name, email)", { count: "exact" })
+    .order("created_at", { ascending: false })
+    .range(offset, offset + limitNum - 1);
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  res.json({
+    data,
+    pagination: {
+      page: pageNum,
+      limit: limitNum,
+      total: count || 0,
+      totalPages: Math.ceil((count || 0) / limitNum)
+    }
+  });
 });
 
 // Admin: update status

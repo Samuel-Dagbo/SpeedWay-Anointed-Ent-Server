@@ -151,7 +151,7 @@ productsRouter.get("/", async (req, res) => {
     }
   };
   
-  setCache(cacheKey, result, q ? 5000 : 15000);
+  setCache(cacheKey, result, q ? 10000 : 30000);
   res.json(result);
 });
 
@@ -168,12 +168,13 @@ productsRouter.get("/by-category", async (req, res) => {
     
     if (error) throw error;
     
-    const { data: products } = await supabaseAdmin
+    const { data: counts } = await supabaseAdmin
       .from("products")
-      .select("category_id");
+      .select("category_id", { count: "exact", head: false })
+      .eq("is_deleted", false);
     
     const countMap = {};
-    (products || []).forEach((p) => {
+    (counts || []).forEach((p) => {
       if (p.category_id) {
         countMap[p.category_id] = (countMap[p.category_id] || 0) + 1;
       }

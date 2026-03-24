@@ -2,6 +2,7 @@
 import { z } from "zod";
 import { supabaseAdmin } from "../services/supabaseClient.js";
 import { authMiddleware } from "../middleware/auth.js";
+import { getCached, setCache } from "../server.js";
 
 export const reportsRouter = express.Router();
 
@@ -84,6 +85,10 @@ reportsRouter.post(
 );
 
 reportsRouter.get("/sales/daily", authMiddleware(["admin", "manager", "staff"]), async (_req, res) => {
+  const cacheKey = "report_sales_daily";
+  const cached = getCached(cacheKey);
+  if (cached) return res.json(cached);
+
   try {
     const { data: sales, error } = await supabaseAdmin
       .from("sales")
@@ -104,6 +109,8 @@ reportsRouter.get("/sales/daily", authMiddleware(["admin", "manager", "staff"]),
     const rows = Array.from(bucket.entries())
       .map(([date, value]) => ({ date, ...value }))
       .sort((a, b) => b.date.localeCompare(a.date));
+    
+    setCache(cacheKey, rows, 300000);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -114,6 +121,10 @@ reportsRouter.get(
   "/sales/products",
   authMiddleware(["admin", "manager", "staff"]),
   async (_req, res) => {
+    const cacheKey = "report_sales_products";
+    const cached = getCached(cacheKey);
+    if (cached) return res.json(cached);
+
     try {
       const { data: sales, error } = await supabaseAdmin
         .from("sales")
@@ -137,6 +148,7 @@ reportsRouter.get(
       });
 
       const rows = Array.from(bucket.values()).sort((a, b) => b.total - a.total);
+      setCache(cacheKey, rows, 300000);
       res.json(rows);
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -148,6 +160,10 @@ reportsRouter.get(
   "/customers/insights",
   authMiddleware(["admin", "manager", "staff"]),
   async (_req, res) => {
+    const cacheKey = "report_customers_insights";
+    const cached = getCached(cacheKey);
+    if (cached) return res.json(cached);
+
     try {
       const { data: orders, error } = await supabaseAdmin
         .from("orders")
@@ -179,7 +195,9 @@ reportsRouter.get(
           : rows.reduce((sum, r) => sum + r.total_spent, 0) /
             rows.reduce((sum, r) => sum + r.order_count, 0);
 
-      res.json({ customers: rows, avgOrderValue: Number(avgOrderValue.toFixed(2)) });
+      const result = { customers: rows, avgOrderValue: Number(avgOrderValue.toFixed(2)) };
+      setCache(cacheKey, result, 300000);
+      res.json(result);
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

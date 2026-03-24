@@ -106,13 +106,51 @@ app.use((err, _req, res, _next) => {
 });
 
 const port = process.env.PORT || 4000;
-app.listen(port, () => {
+app.listen(port, async () => {
   console.log(`API server running on http://localhost:${port}`);
+  
+  // Pre-warm cache on startup
+  setTimeout(async () => {
+    try {
+      const [cats, brds, mdlz, yrs] = await Promise.all([
+        supabaseAdmin.from("categories").select("*").order("name"),
+        supabaseAdmin.from("brands").select("*").order("name"),
+        supabaseAdmin.from("models").select("*, brands(name)").order("name"),
+        supabaseAdmin.from("years").select("*").order("label", { ascending: false })
+      ]);
+      setCache("categories:all", cats.data, 3600000);
+      setCache("brands:all", brds.data, 3600000);
+      setCache("models:all", mdlz.data, 3600000);
+      setCache("years:all", yrs.data, 3600000);
+      console.log("[cache] pre-warmed on startup");
+    } catch (err) {
+      console.warn("[cache] pre-warm failed:", err?.message);
+    }
+  }, 3000);
 });
 
 // Optional self-ping to reduce cold starts on hosts like Render
 const selfPingUrl = process.env.SELF_PING_URL;
 const selfPingMinutes = Number(process.env.SELF_PING_MINUTES || 10);
+
+async function warmCache() {
+  try {
+    const [cats, brds, mdlz, yrs] = await Promise.all([
+      supabaseAdmin.from("categories").select("*").order("name"),
+      supabaseAdmin.from("brands").select("*").order("name"),
+      supabaseAdmin.from("models").select("*, brands(name)").order("name"),
+      supabaseAdmin.from("years").select("*").order("label", { ascending: false })
+    ]);
+    setCache("categories:all", cats.data, 3600000);
+    setCache("brands:all", brds.data, 3600000);
+    setCache("models:all", mdlz.data, 3600000);
+    setCache("years:all", yrs.data, 3600000);
+    console.log("[cache] warmed", new Date().toISOString());
+  } catch (err) {
+    console.warn("[cache] warm failed:", err?.message);
+  }
+}
+
 if (selfPingUrl) {
   const intervalMs = Math.max(selfPingMinutes, 1) * 60 * 1000;
   const ping = async () => {
@@ -122,6 +160,7 @@ if (selfPingUrl) {
       await fetch(selfPingUrl, { method: "GET", signal: controller.signal });
       clearTimeout(timeoutId);
       console.log("[self-ping] ok", new Date().toISOString());
+      await warmCache();
     } catch (err) {
       console.warn("[self-ping] failed:", err?.message || err);
     }

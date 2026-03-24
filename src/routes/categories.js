@@ -22,7 +22,7 @@ categoriesRouter.get("/", async (_req, res) => {
     .order("name", { ascending: true });
   if (error) return res.status(500).json({ error: error.message });
   
-  setCache(cacheKey, data, 120000);
+  setCache(cacheKey, data, 3600000);
   res.json(data);
 });
 
