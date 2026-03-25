@@ -22,10 +22,9 @@ const productSchema = z.object({
     (val) => (val === "" || val === undefined ? null : Number(val)),
     z.number().nullable().optional()
   ),
-  quantity: z.preprocess((val) => Number(val), z.number().int()),
+quantity: z.preprocess((val) => Number(val), z.number().int()),
   description: z.string().optional().nullable(),
   image_url: z.string().url().optional().nullable(),
-  car_image_url: z.string().url().optional().nullable(),
   status: z.enum(["active", "inactive"]).default("active")
 });
 
@@ -37,8 +36,7 @@ const upload = multer({
 function maybeUpload(req, res, next) {
   if (req.is("multipart/form-data")) {
     return upload.fields([
-      { name: "image", maxCount: 1 },
-      { name: "car_image", maxCount: 1 }
+      { name: "image", maxCount: 1 }
     ])(req, res, next);
   }
   return next();
@@ -111,7 +109,7 @@ productsRouter.get("/", async (req, res) => {
   let query = supabaseAdmin
     .from("products")
     .select(
-      "*, categories(name), brands(name), models(name), years(label)",
+      "*, categories(name), brands(name), models(name), years(id, label)",
       { count: "exact" }
     )
     .eq("is_deleted", false);
@@ -198,7 +196,7 @@ productsRouter.get("/by-category", async (req, res) => {
 productsRouter.get("/export", authMiddleware("admin"), async (_req, res) => {
   const { data, error } = await supabaseAdmin
     .from("products")
-    .select("name, price, cost_price, quantity, description, image_url, car_image_url, status, categories(name), brands(name), models(name), years(label)")
+    .select("name, price, cost_price, quantity, description, image_url, status, categories(name), brands(name), models(name), years(label)")
     .eq("is_deleted", false)
     .order("created_at", { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
@@ -213,7 +211,6 @@ productsRouter.get("/export", authMiddleware("admin"), async (_req, res) => {
     "quantity",
     "description",
     "image_url",
-    "car_image_url",
     "status"
   ];
   const lines = [header.join(",")];
@@ -229,7 +226,6 @@ productsRouter.get("/export", authMiddleware("admin"), async (_req, res) => {
       p.quantity,
       (p.description || "").replace(/\n/g, " "),
       p.image_url || "",
-      p.car_image_url || "",
       p.status
     ];
     lines.push(row.join(","));
@@ -276,13 +272,12 @@ productsRouter.post("/import", authMiddleware("admin"), async (req, res) => {
         category_id: category?.id || null,
         brand_id: brand?.id || null,
         model_id: model?.id || null,
-        year_id: yearData?.id || null,
+year_id: yearData?.id || null,
         price: Number(row.price || 0),
         cost_price: row.cost_price ? Number(row.cost_price) : null,
         quantity: Number(row.quantity || 0),
         description: row.description || null,
         image_url: row.image_url || null,
-        car_image_url: row.car_image_url || null,
         status: row.status || "active"
       };
       const { data, error } = await supabaseAdmin
@@ -304,7 +299,7 @@ productsRouter.get("/:id", async (req, res) => {
   const { data, error } = await supabaseAdmin
     .from("products")
     .select(
-      "*, categories(name), brands(name), models(name), years(label)"
+      "*, categories(name), brands(name), models(name), years(id, label)"
     )
     .eq("id", req.params.id)
     .eq("is_deleted", false)
@@ -314,17 +309,13 @@ productsRouter.get("/:id", async (req, res) => {
 });
 
 productsRouter.post("/", authMiddleware(["admin", "manager"]), maybeUpload, async (req, res) => {
-  try {
+try {
     const raw = req.body;
     const payload = productSchema.parse(raw);
     const files = req.files || {};
     const productImage = Array.isArray(files.image) ? files.image[0] : null;
-    const carImage = Array.isArray(files.car_image) ? files.car_image[0] : null;
     if (productImage) {
       payload.image_url = await uploadProductImage(productImage, "products");
-    }
-    if (carImage) {
-      payload.car_image_url = await uploadProductImage(carImage, "cars");
     }
     const { data, error } = await supabaseAdmin
       .from("products")
@@ -352,12 +343,8 @@ productsRouter.put("/:id", authMiddleware(["admin", "manager"]), maybeUpload, as
     const payload = productSchema.partial().parse(req.body);
     const files = req.files || {};
     const productImage = Array.isArray(files.image) ? files.image[0] : null;
-    const carImage = Array.isArray(files.car_image) ? files.car_image[0] : null;
     if (productImage) {
       payload.image_url = await uploadProductImage(productImage, "products");
-    }
-    if (carImage) {
-      payload.car_image_url = await uploadProductImage(carImage, "cars");
     }
     const { data, error } = await supabaseAdmin
       .from("products")

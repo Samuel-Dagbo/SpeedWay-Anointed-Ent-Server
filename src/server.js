@@ -63,6 +63,7 @@ import { notificationsRouter } from "./routes/notifications.js";
 import { inventoryRouter } from "./routes/inventory.js";
 import { stockSubscriptionsRouter } from "./routes/stockSubscriptions.js";
 import { auditLogsRouter } from "./routes/auditLogs.js";
+import { modelYearGalleriesRouter } from "./routes/model-year-galleries.js";
 
 const app = express();
 
@@ -97,6 +98,7 @@ app.use("/notifications", notificationsRouter);
 app.use("/inventory", inventoryRouter);
 app.use("/stock-subscriptions", stockSubscriptionsRouter);
 app.use("/audit-logs", auditLogsRouter);
+app.use("/model-year-galleries", modelYearGalleriesRouter);
 
 // Generic error handler
 app.use((err, _req, res, _next) => {
