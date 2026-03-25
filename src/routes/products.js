@@ -109,7 +109,7 @@ productsRouter.get("/", async (req, res) => {
   let query = supabaseAdmin
     .from("products")
     .select(
-      "*, categories(name), brands(name), models(name), years(id, label)",
+      "*, categories(name), brands(name), models(name, image_url), years(id, label)",
       { count: "exact" }
     )
     .eq("is_deleted", false);
@@ -299,7 +299,7 @@ productsRouter.get("/:id", async (req, res) => {
   const { data, error } = await supabaseAdmin
     .from("products")
     .select(
-      "*, categories(name), brands(name), models(name), years(id, label)"
+      "*, categories(name), brands(name), models(name, image_url, gallery), years(id, label)"
     )
     .eq("id", req.params.id)
     .eq("is_deleted", false)

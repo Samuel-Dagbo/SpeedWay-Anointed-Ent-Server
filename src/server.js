@@ -8,6 +8,7 @@ import compression from "compression";
 import morgan from "morgan";
 import { createClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "./services/supabaseClient.js";
+import { authMiddleware } from "./middleware/auth.js";
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -63,7 +64,6 @@ import { notificationsRouter } from "./routes/notifications.js";
 import { inventoryRouter } from "./routes/inventory.js";
 import { stockSubscriptionsRouter } from "./routes/stockSubscriptions.js";
 import { auditLogsRouter } from "./routes/auditLogs.js";
-import { modelYearGalleriesRouter } from "./routes/model-year-galleries.js";
 
 const app = express();
 
@@ -98,30 +98,6 @@ app.use("/notifications", notificationsRouter);
 app.use("/inventory", inventoryRouter);
 app.use("/stock-subscriptions", stockSubscriptionsRouter);
 app.use("/audit-logs", auditLogsRouter);
-app.use("/model-year-galleries", modelYearGalleriesRouter);
-
-// TEMPORARY: Create model_year_galleries table
-app.post("/admin/create-gallery-table", async (req, res) => {
-  try {
-    const { error } = await supabaseAdmin.query(`
-      CREATE TABLE IF NOT EXISTS public.model_year_galleries (
-        id uuid primary key default gen_random_uuid(),
-        model_id uuid not null references public.models(id) on delete cascade,
-        year text not null,
-        image_url text,
-        gallery jsonb not null default '[]'::jsonb,
-        created_at timestamptz not null default now(),
-        updated_at timestamptz not null default now(),
-        unique (model_id, year)
-      );
-      CREATE INDEX IF NOT EXISTS idx_model_year_galleries_model ON public.model_year_galleries(model_id);
-    `);
-    if (error) return res.status(400).json({ error: error.message });
-    res.json({ message: "Table created successfully" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
 // TEMPORARY: Delete products not in Seat Belt or Car Alarm Systems
 app.post("/admin/cleanup-products", async (req, res) => {
@@ -147,6 +123,141 @@ app.post("/admin/cleanup-products", async (req, res) => {
     
     clearCache("products");
     res.json({ message: `Deleted ${count} products. Kept Seat Belt and Car Alarm Systems products.` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Clean up database: drop model_year_galleries table and ensure models has gallery column
+app.post("/admin/cleanup-gallery-table", authMiddleware("admin"), async (req, res) => {
+  try {
+    const results = [];
+    
+    // Try direct query approach for dropping table
+    try {
+      await supabaseAdmin.query('DROP TABLE IF EXISTS public.model_year_galleries;');
+      results.push("Dropped model_year_galleries table");
+    } catch (e) {
+      // Table might not exist, that's fine
+      results.push("model_year_galleries table check (may not exist)");
+    }
+    
+    // Ensure models table has gallery column
+    try {
+      await supabaseAdmin.query(`
+        ALTER TABLE public.models 
+        ADD COLUMN IF NOT EXISTS gallery jsonb NOT NULL DEFAULT '[]';
+      `);
+      results.push("Added gallery column to models table");
+    } catch (e) {
+      results.push("gallery column already exists or could not be added");
+    }
+    
+    clearCache("models");
+    res.json({ message: "Database cleanup complete", details: results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Split existing models with multiple years into separate model entries
+app.post("/admin/split-models-by-year", authMiddleware("admin"), async (req, res) => {
+  try {
+    // Get all models with multiple years
+    const { data: modelsWithYears, error: fetchError } = await supabaseAdmin
+      .from("models")
+      .select("*")
+      .not("years", "eq", "[]");
+
+    if (fetchError) return res.status(500).json({ error: fetchError.message });
+
+    const results = { created: 0, deleted: 0, skipped: 0, errors: [] };
+
+    for (const model of modelsWithYears || []) {
+      if (!model.years || !Array.isArray(model.years) || model.years.length === 0) {
+        results.skipped++;
+        continue;
+      }
+
+      try {
+        // Create new model entries for each year
+        const newModelEntries = [];
+        for (const year of model.years) {
+          const yearName = `${model.name} ${year}`;
+          
+          // Check if this model already exists
+          const { data: existing } = await supabaseAdmin
+            .from("models")
+            .select("id")
+            .eq("name", yearName)
+            .eq("brand_id", model.brand_id)
+            .maybeSingle();
+
+          if (existing) {
+            // If products exist on old model, move them to existing model
+            const { data: productsOnOld } = await supabaseAdmin
+              .from("products")
+              .select("id")
+              .eq("model_id", model.id);
+
+            if (productsOnOld && productsOnOld.length > 0) {
+              await supabaseAdmin
+                .from("products")
+                .update({ model_id: existing.id })
+                .eq("model_id", model.id);
+            }
+            results.skipped++;
+          } else {
+            // Create new model
+            const { data: newModel, error: createError } = await supabaseAdmin
+              .from("models")
+              .insert({
+                name: yearName,
+                brand_id: model.brand_id,
+                years: [year],
+                image_url: model.image_url || null,
+                gallery: model.gallery || []
+              })
+              .select("id")
+              .single();
+
+            if (createError) {
+              results.errors.push(`${model.name}: ${createError.message}`);
+              continue;
+            }
+
+            // Move any products from old model to new model
+            await supabaseAdmin
+              .from("products")
+              .update({ model_id: newModel.id })
+              .eq("model_id", model.id);
+
+            results.created++;
+          }
+        }
+
+        // Check if any products still on this model
+        const { data: remainingProducts } = await supabaseAdmin
+          .from("products")
+          .select("id", { count: "exact", head: true })
+          .eq("model_id", model.id);
+
+        if (!remainingProducts || remainingProducts.count === 0) {
+          // Safe to delete old model
+          await supabaseAdmin.from("models").delete().eq("id", model.id);
+          results.deleted++;
+        }
+      } catch (err) {
+        results.errors.push(`${model.name}: ${err.message}`);
+      }
+    }
+
+    clearCache("models");
+    clearCache("products");
+    res.json({ 
+      message: "Models split by year complete",
+      ...results
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
