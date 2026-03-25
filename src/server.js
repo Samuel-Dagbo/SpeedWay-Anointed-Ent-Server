@@ -100,6 +100,58 @@ app.use("/stock-subscriptions", stockSubscriptionsRouter);
 app.use("/audit-logs", auditLogsRouter);
 app.use("/model-year-galleries", modelYearGalleriesRouter);
 
+// TEMPORARY: Create model_year_galleries table
+app.post("/admin/create-gallery-table", async (req, res) => {
+  try {
+    const { error } = await supabaseAdmin.query(`
+      CREATE TABLE IF NOT EXISTS public.model_year_galleries (
+        id uuid primary key default gen_random_uuid(),
+        model_id uuid not null references public.models(id) on delete cascade,
+        year text not null,
+        image_url text,
+        gallery jsonb not null default '[]'::jsonb,
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now(),
+        unique (model_id, year)
+      );
+      CREATE INDEX IF NOT EXISTS idx_model_year_galleries_model ON public.model_year_galleries(model_id);
+    `);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ message: "Table created successfully" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// TEMPORARY: Delete products not in Seat Belt or Car Alarm Systems
+app.post("/admin/cleanup-products", async (req, res) => {
+  try {
+    const seatBeltId = '3b26667d-e16b-4fdf-b6bd-c5538ed04fba';
+    const carAlarmId = 'a769b67d-3b3c-43e1-ba20-b5a89db916fd';
+    
+    // First get count of products to delete
+    const { count } = await supabaseAdmin
+      .from("products")
+      .select("*", { count: "exact", head: true })
+      .not("category_id", "eq", seatBeltId)
+      .not("category_id", "eq", carAlarmId);
+    
+    // Delete products not in those categories
+    const { error: deleteError } = await supabaseAdmin
+      .from("products")
+      .delete()
+      .not("category_id", "eq", seatBeltId)
+      .not("category_id", "eq", carAlarmId);
+    
+    if (deleteError) return res.status(400).json({ error: deleteError.message });
+    
+    clearCache("products");
+    res.json({ message: `Deleted ${count} products. Kept Seat Belt and Car Alarm Systems products.` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Generic error handler
 app.use((err, _req, res, _next) => {
   console.error(err);
