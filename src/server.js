@@ -280,13 +280,15 @@ app.listen(port, async () => {
     try {
       const [cats, brds, mdlz, yrs] = await Promise.all([
         supabaseAdmin.from("categories").select("*").order("name"),
-        supabaseAdmin.from("brands").select("*").order("name"),
-        supabaseAdmin.from("models").select("*, brands(name)").order("name"),
+        supabaseAdmin.from("brands").select("*").eq("is_hidden", false).order("name"),
+        supabaseAdmin.from("models").select("*, brands(name, is_hidden)").order("name"),
         supabaseAdmin.from("years").select("*").order("label", { ascending: false })
       ]);
+      // Filter models for hidden brands
+      const visibleModels = (mdlz.data || []).filter(m => !m.brands?.is_hidden);
       setCache("categories:all", cats.data, 3600000);
       setCache("brands:all", brds.data, 3600000);
-      setCache("models:all", mdlz.data, 3600000);
+      setCache("models:all", visibleModels, 3600000);
       setCache("years:all", yrs.data, 3600000);
       console.log("[cache] pre-warmed on startup");
     } catch (err) {
@@ -303,13 +305,15 @@ async function warmCache() {
   try {
     const [cats, brds, mdlz, yrs] = await Promise.all([
       supabaseAdmin.from("categories").select("*").order("name"),
-      supabaseAdmin.from("brands").select("*").order("name"),
-      supabaseAdmin.from("models").select("*, brands(name)").order("name"),
+      supabaseAdmin.from("brands").select("*").eq("is_hidden", false).order("name"),
+      supabaseAdmin.from("models").select("*, brands(name, is_hidden)").order("name"),
       supabaseAdmin.from("years").select("*").order("label", { ascending: false })
     ]);
+    // Filter models for hidden brands
+    const visibleModels = (mdlz.data || []).filter(m => !m.brands?.is_hidden);
     setCache("categories:all", cats.data, 3600000);
     setCache("brands:all", brds.data, 3600000);
-    setCache("models:all", mdlz.data, 3600000);
+    setCache("models:all", visibleModels, 3600000);
     setCache("years:all", yrs.data, 3600000);
     console.log("[cache] warmed", new Date().toISOString());
   } catch (err) {
