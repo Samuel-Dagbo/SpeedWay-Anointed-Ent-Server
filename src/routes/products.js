@@ -140,13 +140,21 @@ productsRouter.get("/", async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
   
   const filtered = data.filter(p => !p.brands?.is_hidden);
+  
+  // Calculate total visible products (approximate based on current page)
+  // Since we can't easily get total without hidden brands in one query,
+  // we use: visible count = total - hidden brands count
+  const hiddenInPage = data.filter(p => p.brands?.is_hidden).length;
+  const visibleInPage = filtered.length;
+  const estimatedTotal = count - hiddenInPage + visibleInPage;
+  
   const result = {
     data: filtered,
     pagination: {
       page: pageNum,
       limit: limitNum,
-      total: filtered.length,
-      totalPages: Math.ceil(filtered.length / limitNum)
+      total: estimatedTotal,
+      totalPages: Math.max(1, Math.ceil(estimatedTotal / limitNum))
     }
   };
   
