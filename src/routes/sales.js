@@ -6,12 +6,17 @@ import { logAudit } from "../services/audit.js";
 
 export const salesRouter = express.Router();
 
-const saleSchema = z.object({
-  product_id: z.string(),
-  quantity: z.number().int().positive(),
-  price: z.number().positive(),
-  note: z.string().optional().nullable()
-});
+const saleSchema = z
+  .object({
+    product_id: z.string().uuid().optional().nullable(),
+    product_name: z.string().trim().min(1).optional().nullable(),
+    quantity: z.number().int().positive(),
+    price: z.number().positive(),
+    note: z.string().optional().nullable()
+  })
+  .refine((payload) => payload.product_id || payload.product_name, {
+    message: "Either product_id or product_name is required"
+  });
 
 // Admin: record in-store sale
 salesRouter.post("/", authMiddleware(["admin", "manager", "staff"]), async (req, res) => {
@@ -22,7 +27,8 @@ salesRouter.post("/", authMiddleware(["admin", "manager", "staff"]), async (req,
     const { data: sale, error } = await supabaseAdmin
       .from("sales")
       .insert({
-        product_id: payload.product_id,
+        product_id: payload.product_id || null,
+        product_name: payload.product_name || null,
         quantity: payload.quantity,
         price: payload.price,
         total,
@@ -33,12 +39,14 @@ salesRouter.post("/", authMiddleware(["admin", "manager", "staff"]), async (req,
     if (error) throw error;
 
     // Decrement stock and log inventory
-    await supabaseAdmin.rpc("decrement_stock_and_log", {
-      p_product_id: payload.product_id,
-      p_quantity: payload.quantity,
-      p_reason: "shop_sale",
-      p_reference: sale.id.toString()
-    });
+    if (payload.product_id) {
+      await supabaseAdmin.rpc("decrement_stock_and_log", {
+        p_product_id: payload.product_id,
+        p_quantity: payload.quantity,
+        p_reason: "shop_sale",
+        p_reference: sale.id.toString()
+      });
+    }
 
     res.status(201).json(sale);
     logAudit({
@@ -46,7 +54,7 @@ salesRouter.post("/", authMiddleware(["admin", "manager", "staff"]), async (req,
       action: "create",
       entity: "sale",
       entity_id: sale.id,
-      metadata: { total: sale.total }
+      metadata: { total: sale.total, product_name: payload.product_name || null }
     });
   } catch (err) {
     res.status(400).json({ error: err.message });
