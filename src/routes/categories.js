@@ -121,8 +121,9 @@ categoriesRouter.get("/:id/products-by-model", async (req, res) => {
     const { data: products, error } = await supabaseAdmin
       .from("products")
       .select(`
-        id, name, price, quantity, image_url, status,
-        models(id, name, image_url, brand_id, brands(id, name, is_hidden))
+        id, name, price, quantity, image_url, status, brand_id, model_id,
+        models(id, name, image_url, brand_id, brands(id, name, logo_url, is_hidden)),
+        brands(id, name, logo_url, is_hidden)
       `)
       .eq("category_id", req.params.id)
       .eq("status", "active")
@@ -130,27 +131,40 @@ categoriesRouter.get("/:id/products-by-model", async (req, res) => {
 
     if (error) throw error;
 
-    const filtered = (products || []).filter(p => !p.models?.brands?.is_hidden);
+    const brandGroups = {};
+    (products || []).forEach(p => {
+      const productBrand = p.brands;
+      const modelBrand = p.models?.brands;
+      const hidden = productBrand?.is_hidden || modelBrand?.is_hidden;
+      if (hidden) return;
 
-    const grouped = {};
-    filtered.forEach(p => {
+      const brandId = p.brand_id || (modelBrand?.id ? `model_brand_${modelBrand.id}` : "universal");
+      const brandName = productBrand?.name || modelBrand?.name || "Universal";
+      const brandLogo = productBrand?.logo_url || modelBrand?.logo_url || null;
+
       const modelId = p.model_id || "universal";
       const modelName = p.models?.name || "Universal Parts";
       const modelImage = p.models?.image_url || null;
-      const brandId = p.models?.brands?.id || null;
-      const brandName = p.models?.brands?.name || null;
 
-      if (!grouped[modelId]) {
-        grouped[modelId] = {
+      if (!brandGroups[brandId]) {
+        brandGroups[brandId] = {
+          brand_id: brandId,
+          brand_name: brandName,
+          brand_logo: brandLogo,
+          models: {}
+        };
+      }
+
+      if (!brandGroups[brandId].models[modelId]) {
+        brandGroups[brandId].models[modelId] = {
           model_id: modelId,
           model_name: modelName,
           model_image: modelImage,
-          brand_id: brandId,
-          brand_name: brandName,
           products: []
         };
       }
-      grouped[modelId].products.push({
+
+      brandGroups[brandId].models[modelId].products.push({
         id: p.id,
         name: p.name,
         price: p.price,
@@ -159,7 +173,17 @@ categoriesRouter.get("/:id/products-by-model", async (req, res) => {
       });
     });
 
-    const result = Object.values(grouped);
+    const result = Object.values(brandGroups)
+      .sort((a, b) => {
+        if (a.brand_id === "universal") return 1;
+        if (b.brand_id === "universal") return -1;
+        return a.brand_name.localeCompare(b.brand_name);
+      })
+      .map(brand => ({
+        ...brand,
+        models: Object.values(brand.models)
+      }));
+
     setCache(cacheKey, result, 30000);
     res.json(result);
   } catch (err) {
