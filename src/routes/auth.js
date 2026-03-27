@@ -1,15 +1,13 @@
-﻿import express from "express";
+import express from "express";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { supabaseAdmin } from "../services/supabaseClient.js";
 import {
   sendWelcomeEmail,
   sendLoginAlert,
-  sendPasswordResetEmail,
-  sendEmailConfirmation
+  sendPasswordResetEmail
 } from "../services/emailService.js";
 import { generateToken } from "../middleware/auth.js";
-import jwt from "jsonwebtoken";
 
 export const authRouter = express.Router();
 
@@ -30,10 +28,6 @@ const resetSchema = z.object({
   password: z.string().min(6)
 });
 
-const verifySchema = z.object({
-  token: z.string().min(10)
-});
-
 authRouter.post("/signup", async (req, res, next) => {
   try {
     const { email, password, full_name, role } = signupSchema.parse(req.body);
@@ -46,23 +40,13 @@ authRouter.post("/signup", async (req, res, next) => {
         full_name,
         role,
         password_hash: passwordHash,
-        email_verified: false
+        email_verified: true
       })
       .select("id, email, full_name, role, email_verified")
       .single();
 
     if (insertError) throw insertError;
 
-    const verifyToken = jwt.sign(
-      { sub: createdUser.id, type: "email_verify" },
-      process.env.JWT_SECRET || "change-me",
-      { expiresIn: "24h" }
-    );
-    const verifyLink = `${process.env.FRONTEND_URL}/verify-email?token=${verifyToken}`;
-
-    sendEmailConfirmation(email, verifyLink).catch((err) =>
-      console.error("[email] verify failed", err)
-    );
     sendWelcomeEmail(email, full_name).catch((err) =>
       console.error("[email] welcome failed", err)
     );
@@ -103,9 +87,6 @@ authRouter.post("/login", async (req, res, next) => {
     const valid = await bcrypt.compare(password, profile.password_hash);
     if (!valid) {
       return res.status(401).json({ error: "Invalid credentials" });
-    }
-    if (!profile.email_verified) {
-      return res.status(403).json({ error: "Please verify your email first." });
     }
 
     sendLoginAlert(email).catch((err) =>
@@ -178,29 +159,6 @@ authRouter.post("/reset-password", async (req, res, next) => {
     if (error) throw error;
 
     res.json({ message: "Password updated successfully." });
-  } catch (err) {
-    next(err);
-  }
-});
-
-authRouter.post("/verify-email", async (req, res, next) => {
-  try {
-    const { token } = verifySchema.parse(req.body);
-    const decoded = jwt.verify(
-      token,
-      process.env.JWT_SECRET || "change-me"
-    );
-    if (decoded.type !== "email_verify") {
-      return res.status(400).json({ error: "Invalid verification token" });
-    }
-
-    const { error } = await supabaseAdmin
-      .from("users")
-      .update({ email_verified: true })
-      .eq("id", decoded.sub);
-    if (error) throw error;
-
-    res.json({ message: "Email verified successfully." });
   } catch (err) {
     next(err);
   }
