@@ -1,5 +1,8 @@
 ﻿import express from "express";
 import { z } from "zod";
+import multer from "multer";
+import sharp from "sharp";
+import crypto from "crypto";
 import { supabaseAdmin } from "../services/supabaseClient.js";
 import { authMiddleware } from "../middleware/auth.js";
 import { getCached, setCache, clearCache } from "../server.js";
@@ -10,6 +13,31 @@ const categorySchema = z.object({
   name: z.string(),
   image_url: z.string().nullable()
 });
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }
+});
+
+async function uploadImage(file, folder = "categories") {
+  const bucket = process.env.SUPABASE_STORAGE_BUCKET || "product-images";
+  const filename = `${folder}/${crypto.randomUUID()}.jpg`;
+  const processed = await sharp(file.buffer)
+    .resize({ width: 1200, withoutEnlargement: true })
+    .jpeg({ quality: 80 })
+    .toBuffer();
+
+  const { error } = await supabaseAdmin.storage
+    .from(bucket)
+    .upload(filename, processed, {
+      contentType: "image/jpeg",
+      upsert: true
+    });
+  if (error) throw error;
+
+  const { data } = supabaseAdmin.storage.from(bucket).getPublicUrl(filename);
+  return data.publicUrl;
+}
 
 categoriesRouter.get("/", async (_req, res) => {
   const cacheKey = "categories:all";
@@ -78,5 +106,17 @@ categoriesRouter.delete("/:id", authMiddleware("admin"), async (req, res) => {
   if (error) return res.status(400).json({ error: error.message });
   clearCache("categories");
   res.status(204).send();
+});
+
+categoriesRouter.post("/upload", authMiddleware("admin"), upload.single("image"), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: "No file uploaded" });
+  }
+  try {
+    const imageUrl = await uploadImage(req.file, "categories");
+    res.json({ url: imageUrl });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 

@@ -109,7 +109,7 @@ productsRouter.get("/", async (req, res) => {
   let query = supabaseAdmin
     .from("products")
     .select(
-      "*, categories(name), brands(name), models(name, image_url), years(id, label)",
+      "*, categories(name), brands(name, is_hidden), models(name, image_url), years(id, label)",
       { count: "exact" }
     )
     .eq("is_deleted", false);
@@ -139,13 +139,14 @@ productsRouter.get("/", async (req, res) => {
     
   if (error) return res.status(500).json({ error: error.message });
   
+  const filtered = data.filter(p => !p.brands?.is_hidden);
   const result = {
-    data,
+    data: filtered,
     pagination: {
       page: pageNum,
       limit: limitNum,
-      total: count || 0,
-      totalPages: Math.ceil((count || 0) / limitNum)
+      total: filtered.length,
+      totalPages: Math.ceil(filtered.length / limitNum)
     }
   };
   
@@ -155,7 +156,7 @@ productsRouter.get("/", async (req, res) => {
 
 // Get products count by category
 productsRouter.get("/by-category", async (req, res) => {
-  const cacheKey = "categories_with_counts";
+  const cacheKey = "categories_with_counts_visible";
   const cached = getCached(cacheKey);
   if (cached) return res.json(cached);
   
@@ -168,12 +169,12 @@ productsRouter.get("/by-category", async (req, res) => {
     
     const { data: counts } = await supabaseAdmin
       .from("products")
-      .select("category_id", { count: "exact", head: false })
+      .select("category_id, brands(is_hidden)", { count: "exact", head: false })
       .eq("is_deleted", false);
     
     const countMap = {};
     (counts || []).forEach((p) => {
-      if (p.category_id) {
+      if (p.category_id && !p.brands?.is_hidden) {
         countMap[p.category_id] = (countMap[p.category_id] || 0) + 1;
       }
     });
@@ -466,6 +467,18 @@ productsRouter.post("/generate-keywords/:id", authMiddleware(["admin", "manager"
     });
 
     res.json({ keywords });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+productsRouter.post("/upload", authMiddleware(["admin", "manager"]), upload.single("image"), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: "No file uploaded" });
+  }
+  try {
+    const imageUrl = await uploadProductImage(req.file, "products");
+    res.json({ url: imageUrl });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
