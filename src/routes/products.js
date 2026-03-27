@@ -115,7 +115,11 @@ productsRouter.get("/", async (req, res) => {
     .eq("is_deleted", false);
 
   if (q) {
-    query = query.ilike("name", `%${q}%`);
+    // Normalize search: remove hyphens, spaces, lowercase
+    const normalizedQ = q.toLowerCase().replace(/[-_\s]/g, "");
+    query = query.or(
+      `name.ilike.%${normalizedQ}%,categories.name.ilike.%${normalizedQ}%,brands.name.ilike.%${normalizedQ}%,models.name.ilike.%${normalizedQ}%`
+    );
   }
   if (brand_id) {
     query = query.eq("brand_id", brand_id);
