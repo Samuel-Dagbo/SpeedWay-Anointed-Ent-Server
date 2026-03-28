@@ -103,7 +103,7 @@ productsRouter.get("/", async (req, res) => {
   if (cached) return res.json(cached);
   
   const pageNum = Math.max(1, parseInt(page) || 1);
-  const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 20));
+  const limitNum = Math.min(10000, Math.max(1, parseInt(limit) || 20));
   const offset = (pageNum - 1) * limitNum;
   
   let query = supabaseAdmin
@@ -115,10 +115,10 @@ productsRouter.get("/", async (req, res) => {
     .eq("is_deleted", false);
 
   if (q) {
-    // Normalize search: remove hyphens, spaces, lowercase
-    const normalizedQ = q.toLowerCase().replace(/[-_\s]/g, "");
+    // Case-insensitive partial match search
+    const searchQ = q.trim();
     query = query.or(
-      `name.ilike.%${normalizedQ}%,categories.name.ilike.%${normalizedQ}%,brands.name.ilike.%${normalizedQ}%,models.name.ilike.%${normalizedQ}%`
+      `name.ilike.%${searchQ}%,categories.name.ilike.%${searchQ}%,brands.name.ilike.%${searchQ}%,models.name.ilike.%${searchQ}%`
     );
   }
   if (brand_id) {
@@ -204,6 +204,40 @@ productsRouter.get("/by-category", async (req, res) => {
     console.error("by-category error:", err);
     res.status(500).json({ error: err.message });
   }
+});
+
+// Admin endpoint: returns all products with optional search and filtering
+// Supports: q (search), status, category_id, brand_id
+productsRouter.get("/all", authMiddleware(["admin", "manager", "staff"]), async (req, res) => {
+  const { q, status, category_id, brand_id } = req.query;
+
+  const cacheKey = `products:all:${JSON.stringify(req.query)}`;
+  const cached = getCached(cacheKey);
+  if (cached) return res.json(cached);
+
+  let query = supabaseAdmin
+    .from("products")
+    .select("*, categories(id, name), brands(id, name, is_hidden), models(id, name, image_url), years(id, label)")
+    .eq("is_deleted", false)
+    .order("created_at", { ascending: false });
+
+  if (status) query = query.eq("status", status);
+  if (category_id) query = query.eq("category_id", category_id);
+  if (brand_id) query = query.eq("brand_id", brand_id);
+
+  if (q && q.trim()) {
+    const searchQ = q.trim();
+    query = query.or(
+      `name.ilike.%${searchQ}%,categories.name.ilike.%${searchQ}%,brands.name.ilike.%${searchQ}%,models.name.ilike.%${searchQ}%`
+    );
+  }
+
+  const { data, error } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+
+  const filtered = data.filter(p => !p.brands?.is_hidden);
+  setCache(cacheKey, filtered, q ? 10000 : 15000);
+  res.json(filtered);
 });
 
 productsRouter.get("/export", authMiddleware("admin"), async (_req, res) => {

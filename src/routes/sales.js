@@ -1,4 +1,4 @@
-﻿import express from "express";
+import express from "express";
 import { z } from "zod";
 import { supabaseAdmin } from "../services/supabaseClient.js";
 import { authMiddleware } from "../middleware/auth.js";
@@ -18,43 +18,92 @@ const saleSchema = z
     message: "Either product_id or product_name is required"
   });
 
-// Admin: record in-store sale
+const batchSaleSchema = z.object({
+  items: z.array(saleSchema).min(1),
+  note: z.string().optional().nullable()
+});
+
+async function processSale(payload, userId) {
+  const total = payload.quantity * payload.price;
+
+  const { data: sale, error } = await supabaseAdmin
+    .from("sales")
+    .insert({
+      product_id: payload.product_id || null,
+      product_name: payload.product_name || null,
+      quantity: payload.quantity,
+      price: payload.price,
+      total,
+      note: payload.note
+    })
+    .select("*")
+    .single();
+  if (error) throw error;
+
+  if (payload.product_id) {
+    await supabaseAdmin.rpc("decrement_stock_and_log", {
+      p_product_id: payload.product_id,
+      p_quantity: payload.quantity,
+      p_reason: "shop_sale",
+      p_reference: sale.id.toString()
+    });
+  }
+
+  logAudit({
+    actor_id: userId,
+    action: "create",
+    entity: "sale",
+    entity_id: sale.id,
+    metadata: { total: sale.total, product_name: payload.product_name || null }
+  });
+
+  return sale;
+}
+
+// Admin: record single in-store sale
 salesRouter.post("/", authMiddleware(["admin", "manager", "staff"]), async (req, res) => {
   try {
     const payload = saleSchema.parse(req.body);
-    const total = payload.quantity * payload.price;
+    const sale = await processSale(payload, req.user.id);
+    res.status(201).json(sale);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
 
-    const { data: sale, error } = await supabaseAdmin
-      .from("sales")
-      .insert({
-        product_id: payload.product_id || null,
-        product_name: payload.product_name || null,
-        quantity: payload.quantity,
-        price: payload.price,
-        total,
-        note: payload.note
-      })
-      .select("*")
-      .single();
-    if (error) throw error;
-
-    // Decrement stock and log inventory
-    if (payload.product_id) {
-      await supabaseAdmin.rpc("decrement_stock_and_log", {
-        p_product_id: payload.product_id,
-        p_quantity: payload.quantity,
-        p_reason: "shop_sale",
-        p_reference: sale.id.toString()
-      });
+// Admin: record batch in-store sales (single transaction)
+salesRouter.post("/batch", authMiddleware(["admin", "manager", "staff"]), async (req, res) => {
+  try {
+    const { items, note } = batchSaleSchema.parse(req.body);
+    
+    const results = [];
+    const totalAmount = items.reduce((sum, item) => sum + (item.quantity * item.price), 0);
+    
+    for (const item of items) {
+      const saleWithNote = { ...item, note: item.note || note };
+      const sale = await processSale(saleWithNote, req.user.id);
+      results.push(sale);
     }
 
-    res.status(201).json(sale);
     logAudit({
       actor_id: req.user.id,
-      action: "create",
+      action: "create_batch",
       entity: "sale",
-      entity_id: sale.id,
-      metadata: { total: sale.total, product_name: payload.product_name || null }
+      entity_id: null,
+      metadata: { 
+        items_count: items.length, 
+        total: totalAmount,
+        note
+      }
+    });
+
+    res.status(201).json({ 
+      success: true, 
+      sales: results,
+      summary: {
+        items_count: items.length,
+        total: totalAmount
+      }
     });
   } catch (err) {
     res.status(400).json({ error: err.message });
