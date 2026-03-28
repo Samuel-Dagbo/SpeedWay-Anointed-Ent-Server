@@ -138,12 +138,12 @@ categoriesRouter.get("/:id/products-by-model", async (req, res) => {
       const hidden = productBrand?.is_hidden || modelBrand?.is_hidden;
       if (hidden) return;
 
-      const brandId = p.brand_id || (modelBrand?.id ? `model_brand_${modelBrand.id}` : "universal");
-      const brandName = productBrand?.name || modelBrand?.name || "Universal";
+      const brandId = p.brand_id || modelBrand?.id || "generic";
+      const brandName = productBrand?.name || modelBrand?.name || "Other";
       const brandLogo = productBrand?.logo_url || modelBrand?.logo_url || null;
 
-      const modelId = p.model_id || "universal";
-      const modelName = p.models?.name || "Universal Parts";
+      const modelId = p.model_id || "__nomodel";
+      const modelName = p.models?.name || null;
       const modelImage = p.models?.image_url || null;
 
       if (!brandGroups[brandId]) {
@@ -174,11 +174,7 @@ categoriesRouter.get("/:id/products-by-model", async (req, res) => {
     });
 
     const result = Object.values(brandGroups)
-      .sort((a, b) => {
-        if (a.brand_id === "universal") return 1;
-        if (b.brand_id === "universal") return -1;
-        return a.brand_name.localeCompare(b.brand_name);
-      })
+      .sort((a, b) => a.brand_name.localeCompare(b.brand_name))
       .map(brand => ({
         ...brand,
         models: Object.values(brand.models)
