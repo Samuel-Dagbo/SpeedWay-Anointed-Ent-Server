@@ -22,21 +22,34 @@ const productSchema = z.object({
     (val) => (val === "" || val === undefined ? null : Number(val)),
     z.number().nullable().optional()
   ),
-quantity: z.preprocess((val) => Number(val), z.number().int()),
+  quantity: z.preprocess((val) => Number(val), z.number().int()),
   description: z.string().optional().nullable(),
   image_url: z.string().url().optional().nullable(),
+  gallery: z.preprocess(
+    (val) => {
+      if (typeof val === "string") {
+        try { return JSON.parse(val); } catch { return []; }
+      }
+      return Array.isArray(val) ? val : [];
+    },
+    z.array(z.object({
+      url: z.string().url(),
+      type: z.enum(["image", "video"]).default("image")
+    })).default([])
+  ),
   status: z.enum(["active", "inactive"]).default("active")
 });
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }
+  limits: { fileSize: 50 * 1024 * 1024 }
 });
 
 function maybeUpload(req, res, next) {
   if (req.is("multipart/form-data")) {
     return upload.fields([
-      { name: "image", maxCount: 1 }
+      { name: "image", maxCount: 1 },
+      { name: "gallery_file", maxCount: 1 }
     ])(req, res, next);
   }
   return next();
@@ -60,6 +73,34 @@ async function uploadProductImage(file, folder = "products") {
 
   const { data } = supabaseAdmin.storage.from(bucket).getPublicUrl(filename);
   return data.publicUrl;
+}
+
+async function uploadGalleryFile(file, folder = "products/gallery") {
+  const bucket = process.env.SUPABASE_STORAGE_BUCKET || "product-images";
+  const isVideo = file.mimetype.startsWith("video/");
+  const ext = isVideo
+    ? (file.mimetype.includes("mp4") ? "mp4" : file.mimetype.includes("webm") ? "webm" : "mp4")
+    : "jpg";
+  const filename = `${folder}/${crypto.randomUUID()}.${ext}`;
+
+  let buffer = file.buffer;
+  let contentType = file.mimetype;
+
+  if (!isVideo) {
+    buffer = await sharp(file.buffer)
+      .resize({ width: 1400, withoutEnlargement: true })
+      .jpeg({ quality: 80 })
+      .toBuffer();
+    contentType = "image/jpeg";
+  }
+
+  const { error } = await supabaseAdmin.storage
+    .from(bucket)
+    .upload(filename, buffer, { contentType, upsert: true });
+  if (error) throw error;
+
+  const { data } = supabaseAdmin.storage.from(bucket).getPublicUrl(filename);
+  return { url: data.publicUrl, type: isVideo ? "video" : "image" };
 }
 
 async function getOrCreateByName(table, name, extra = {}) {
@@ -346,7 +387,7 @@ productsRouter.get("/:id", async (req, res) => {
   const { data, error } = await supabaseAdmin
     .from("products")
     .select(
-      "*, categories(name), brands(name), models(name, image_url, gallery), years(id, label)"
+      "*, categories(name), brands(name), models(name, image_url, gallery), years(id, label), gallery"
     )
     .eq("id", req.params.id)
     .eq("is_deleted", false)
@@ -525,6 +566,29 @@ productsRouter.post("/upload", authMiddleware(["admin", "manager"]), upload.sing
   try {
     const imageUrl = await uploadProductImage(req.file, "products");
     res.json({ url: imageUrl });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+productsRouter.post("/upload-gallery", authMiddleware(["admin", "manager"]), upload.single("file"), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: "No file uploaded" });
+  }
+  const isVideo = req.file.mimetype.startsWith("video/");
+  const isImage = req.file.mimetype.startsWith("image/");
+  if (!isVideo && !isImage) {
+    return res.status(400).json({ error: "Only images and videos are allowed" });
+  }
+  if (isVideo && req.file.size > 50 * 1024 * 1024) {
+    return res.status(400).json({ error: "Video must be under 50MB" });
+  }
+  if (isImage && req.file.size > 5 * 1024 * 1024) {
+    return res.status(400).json({ error: "Image must be under 5MB" });
+  }
+  try {
+    const result = await uploadGalleryFile(req.file, "products/gallery");
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
