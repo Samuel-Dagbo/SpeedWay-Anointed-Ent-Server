@@ -9,6 +9,7 @@ import morgan from "morgan";
 import { createClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "./services/supabaseClient.js";
 import { authMiddleware } from "./middleware/auth.js";
+import { errorHandler, notFoundHandler, asyncHandler, ApiError } from "./middleware/errorHandler.js";
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -263,13 +264,11 @@ app.post("/admin/split-models-by-year", authMiddleware("admin"), async (req, res
   }
 });
 
-// Generic error handler
-app.use((err, _req, res, _next) => {
-  console.error(err);
-  res
-    .status(err.status || 500)
-    .json({ error: err.message || "Internal server error" });
-});
+// 404 handler for unmatched routes
+app.use(notFoundHandler);
+
+// Global error handler (must be last)
+app.use(errorHandler);
 
 const port = process.env.PORT || 4000;
 app.listen(port, async () => {
