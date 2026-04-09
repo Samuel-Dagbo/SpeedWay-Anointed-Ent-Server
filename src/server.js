@@ -258,7 +258,6 @@ function generateHealthReportEmail(results) {
     </div>
   `;
 }
-}
 
 async function startServer() {
   try {
