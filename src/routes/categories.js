@@ -43,14 +43,15 @@ categoriesRouter.get("/", async (_req, res) => {
 
 categoriesRouter.get("/:id", async (req, res) => {
   try {
-    const category = await collections.categories().findOne({ _id: toObjectId(req.params.id) });
-    if (!category) return res.status(404).json({ error: "Category not found" });
-    category.id = category._id.toString();
-    category._id = undefined;
-    if (category.show_by_brand === undefined) {
-      category.show_by_brand = true;
+    const id = req.params.id;
+    const raw = await collections.categories().findOne({ _id: id });
+    if (!raw) return res.status(404).json({ error: "Category not found", debug_id: id, id_type: typeof id });
+    raw.id = String(raw._id);
+    raw._id = undefined;
+    if (raw.show_by_brand === undefined) {
+      raw.show_by_brand = true;
     }
-    res.json(category);
+    res.json(raw);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
