@@ -145,9 +145,6 @@ productsRouter.get("/", async (req, res) => {
     ]);
     
     const filtered = data.map(p => transformProductForFrontend(p));
-      models: { name: p.model_data?.name, image_url: p.model_data?.image_url },
-      years: { id: p.year_data?._id?.toString(), label: p.year_data?.label }
-    }));
     
     setCache(cacheKey, {
       data: filtered,
