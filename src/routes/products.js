@@ -122,9 +122,9 @@ productsRouter.get("/", async (req, res) => {
   
   try {
     const match = { is_deleted: { $ne: true } };
-    if (brand_id) match.brand_id = toObjectId(brand_id);
-    if (model_id) match.model_id = toObjectId(model_id);
-    if (year_id) match.year_id = toObjectId(year_id);
+    if (brand_id) match.brand_id = brand_id;
+    if (model_id) match.model_id = model_id;
+    if (year_id) match.year_id = year_id;
     if (category_id) match.category_id = category_id;
     if (status) match.status = status;
     
@@ -274,7 +274,7 @@ productsRouter.get("/all", authMiddleware(["admin", "manager", "staff"]), async 
     const match = { is_deleted: { $ne: true } };
     if (status) match.status = status;
     if (category_id) match.category_id = category_id;
-    if (brand_id) match.brand_id = toObjectId(brand_id);
+    if (brand_id) match.brand_id = brand_id;
     if (q) {
       match.$or = [
         { name: { $regex: q, $options: "i" } }
@@ -483,7 +483,7 @@ productsRouter.get("/:id", async (req, res) => {
   try {
     const product = await collections.products()
       .aggregate([
-        { $match: { _id: toObjectId(req.params.id), is_deleted: { $ne: true } } },
+        { $match: { _id: req.params.id, is_deleted: { $ne: true } } },
         {
           $lookup: {
             from: "categories",
@@ -599,7 +599,7 @@ productsRouter.put("/:id", authMiddleware(["admin", "manager"]), maybeUpload, as
     };
     
     const result = await collections.products().findOneAndUpdate(
-      { _id: toObjectId(req.params.id) },
+      { _id: req.params.id },
       { $set: updateData },
       { returnDocument: "after" }
     );
@@ -625,7 +625,7 @@ productsRouter.put("/:id", authMiddleware(["admin", "manager"]), maybeUpload, as
 productsRouter.delete("/:id", authMiddleware(["admin", "manager"]), async (req, res) => {
   try {
     const result = await collections.products().findOneAndUpdate(
-      { _id: toObjectId(req.params.id) },
+      { _id: req.params.id },
       { $set: { is_deleted: true, updated_at: new Date() } }
     );
     
@@ -650,7 +650,7 @@ productsRouter.post("/generate-image/:id", authMiddleware(["admin", "manager"]),
   try {
     const product = await collections.products()
       .aggregate([
-        { $match: { _id: toObjectId(req.params.id) } },
+        { $match: { _id: req.params.id } },
         {
           $lookup: {
             from: "categories",
@@ -710,7 +710,7 @@ productsRouter.post("/generate-image/:id", authMiddleware(["admin", "manager"]),
 
     if (imageUrl) {
       await collections.products().updateOne(
-        { _id: toObjectId(req.params.id) },
+        { _id: req.params.id },
         { $set: { image_url: imageUrl, updated_at: new Date() } }
       );
       clearCache("products");
@@ -727,7 +727,7 @@ productsRouter.post("/generate-keywords/:id", authMiddleware(["admin", "manager"
   try {
     const product = await collections.products()
       .aggregate([
-        { $match: { _id: toObjectId(req.params.id) } },
+        { $match: { _id: req.params.id } },
         {
           $lookup: {
             from: "categories",

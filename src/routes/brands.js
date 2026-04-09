@@ -43,9 +43,9 @@ brandsRouter.get("/", async (_req, res) => {
 
 brandsRouter.get("/:id", async (req, res) => {
   try {
-    const brand = await collections.brands().findOne({ _id: toObjectId(req.params.id) });
+    const brand = await collections.brands().findOne({ _id: req.params.id });
     if (!brand) return res.status(404).json({ error: "Brand not found" });
-    brand.id = brand._id.toString();
+    brand.id = String(brand._id);
     brand._id = undefined;
     res.json(brand);
   } catch (err) {
@@ -73,7 +73,7 @@ brandsRouter.put("/:id", authMiddleware("admin"), async (req, res) => {
   try {
     const payload = brandSchema.partial().parse(req.body);
     const result = await collections.brands().findOneAndUpdate(
-      { _id: toObjectId(req.params.id) },
+      { _id: req.params.id },
       { $set: { ...payload, updated_at: new Date() } },
       { returnDocument: "after" }
     );
@@ -87,7 +87,7 @@ brandsRouter.put("/:id", authMiddleware("admin"), async (req, res) => {
 
 brandsRouter.delete("/:id", authMiddleware("admin"), async (req, res) => {
   try {
-    const result = await collections.brands().deleteOne({ _id: toObjectId(req.params.id) });
+    const result = await collections.brands().deleteOne({ _id: req.params.id });
     if (result.deletedCount === 0) return res.status(404).json({ error: "Brand not found" });
     clearCache("brands");
     res.status(204).send();
