@@ -1,53 +1,24 @@
-import { google } from "googleapis";
+import { Resend } from "resend";
 
 const {
-  GOOGLE_CLIENT_ID,
-  GOOGLE_CLIENT_SECRET,
-  GOOGLE_REFRESH_TOKEN,
+  RESEND_API,
   GMAIL_USER,
   OWNER_EMAIL,
   NOTIFICATION_COPY_EMAILS
 } = process.env;
 
 const ADMIN_EMAIL = OWNER_EMAIL || GMAIL_USER;
-const OAUTH_REDIRECT_URI = "https://developers.google.com/oauthplayground";
+const FROM_EMAIL = GMAIL_USER || "noreply@speedway.example";
 
-const canSendEmail = () =>
-  Boolean(GMAIL_USER && GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && GOOGLE_REFRESH_TOKEN);
+const canSendEmail = () => Boolean(RESEND_API);
 
-let cachedToken = null;
-let tokenExpiry = 0;
+let resendClient = null;
 
-const getOAuth2Client = () => {
-  const client = new google.auth.OAuth2(
-    GOOGLE_CLIENT_ID,
-    GOOGLE_CLIENT_SECRET,
-    OAUTH_REDIRECT_URI
-  );
-  client.setCredentials({ 
-    refresh_token: GOOGLE_REFRESH_TOKEN,
-    access_type: 'offline'
-  });
-  return client;
-};
-
-const getAccessToken = async (forceRefresh = false) => {
-  if (!forceRefresh && cachedToken && Date.now() < tokenExpiry - 60000) {
-    return cachedToken;
+const getResendClient = () => {
+  if (!resendClient && RESEND_API) {
+    resendClient = new Resend(RESEND_API);
   }
-  
-  try {
-    const oauth2Client = getOAuth2Client();
-    const { credentials } = await oauth2Client.refreshAccessToken();
-    cachedToken = credentials.access_token;
-    tokenExpiry = credentials.expiry_date || (Date.now() + 3600000);
-    return cachedToken;
-  } catch (err) {
-    console.error("[email] Failed to refresh token:", err?.message);
-    cachedToken = null;
-    tokenExpiry = 0;
-    throw err;
-  }
+  return resendClient;
 };
 
 const getCopyEmails = (primaryTo) => {
@@ -63,7 +34,7 @@ const getCopyEmails = (primaryTo) => {
 
 const BRAND = {
   name: "Speedway Anointed Ent",
-  supportEmail: process.env.GMAIL_USER || "support@speedway.example",
+  supportEmail: GMAIL_USER || "support@speedway.example",
   website: process.env.FRONTEND_URL || "http://localhost:5173"
 };
 
@@ -98,65 +69,39 @@ function emailLayout({ title, intro, ctaLabel, ctaLink, body, footer }) {
   `;
 }
 
-async function sendEmail({ to, subject, html }, retryCount = 0) {
+async function sendEmail({ to, subject, html }) {
   try {
     if (!canSendEmail() || !to) {
-      console.warn("[email] Cannot send: missing configuration or recipient");
+      console.warn("[email] Cannot send: missing API key or recipient");
       return false;
     }
 
-    const accessToken = await getAccessToken();
-    if (!accessToken) {
-      console.error("[email] No access token available");
+    const client = getResendClient();
+    if (!client) {
+      console.error("[email] Resend client not initialized");
       return false;
     }
 
-    const oauth2Client = getOAuth2Client();
-    oauth2Client.setCredentials({ 
-      access_token: accessToken,
-      refresh_token: GOOGLE_REFRESH_TOKEN 
-    });
-
-    const gmail = google.gmail({ version: "v1", auth: oauth2Client });
     const copyEmails = getCopyEmails(to);
-    const lines = [
-      `From: Speedway Anointed Ent <${GMAIL_USER}>`,
-      `To: ${to}`,
-      ...(copyEmails.length ? [`Bcc: ${copyEmails.join(", ")}`] : []),
-      `Subject: ${subject}`,
-      "MIME-Version: 1.0",
-      'Content-Type: text/html; charset="UTF-8"',
-      "",
-      html || ""
-    ];
+    const bcc = copyEmails.length > 0 ? copyEmails : undefined;
 
-    const raw = Buffer.from(lines.join("\n"))
-      .toString("base64")
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_")
-      .replace(/=+$/, "");
-
-    await gmail.users.messages.send({
-      userId: "me",
-      requestBody: { raw }
+    const { data, error } = await client.emails.send({
+      from: `Speedway Anointed Ent <${FROM_EMAIL}>`,
+      to: [to],
+      bcc: bcc,
+      subject,
+      html
     });
-    
-    console.log("[email] Sent successfully to:", to);
+
+    if (error) {
+      console.error("[email] Resend error:", error);
+      return false;
+    }
+
+    console.log("[email] Sent successfully to:", to, "ID:", data?.id);
     return true;
   } catch (err) {
-    console.error("[email] Failed to send email:", err?.message, err?.code);
-    
-    if (err?.message?.includes("invalid_grant") || err?.message?.includes("Token has been expired")) {
-      console.error("[email] OAuth token expired, clearing cache");
-      cachedToken = null;
-      tokenExpiry = 0;
-      
-      if (retryCount === 0) {
-        console.log("[email] Retrying with fresh token...");
-        return sendEmail({ to, subject, html }, retryCount + 1);
-      }
-    }
-    
+    console.error("[email] Failed to send email:", err);
     return false;
   }
 }
@@ -253,7 +198,7 @@ export async function sendTestEmail(to) {
     subject: "Speedway Anointed Ent test email",
     html: emailLayout({
       title: "Test email",
-      intro: "This is a test email to confirm Gmail API is working.",
+      intro: "This is a test email to confirm email service is working.",
       footer: "If you received this, your email configuration is correct."
     })
   });
