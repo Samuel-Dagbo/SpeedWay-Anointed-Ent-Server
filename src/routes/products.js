@@ -683,19 +683,26 @@ productsRouter.post("/generate-keywords/:id", authMiddleware(["admin", "manager"
 });
 
 productsRouter.post("/upload", authMiddleware(["admin", "manager"]), upload.single("image"), async (req, res) => {
+  console.log("[upload] Request received, file:", req.file?.originalname, "size:", req.file?.size);
   if (!req.file) {
+    console.log("[upload] No file in request");
     return res.status(400).json({ error: "No file uploaded" });
   }
   try {
+    console.log("[upload] Uploading to Cloudinary...");
     const result = await uploadImage(req.file.buffer, "products");
+    console.log("[upload] Success:", result.url);
     res.json({ url: result.url });
   } catch (err) {
+    console.error("[upload] Cloudinary error:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
 productsRouter.post("/upload-gallery", authMiddleware(["admin", "manager"]), upload.single("file"), async (req, res) => {
+  console.log("[upload-gallery] Request received, file:", req.file?.originalname, "size:", req.file?.size, "type:", req.file?.mimetype);
   if (!req.file) {
+    console.log("[upload-gallery] No file in request");
     return res.status(400).json({ error: "No file uploaded" });
   }
   const isVideo = req.file.mimetype.startsWith("video/");
@@ -710,14 +717,17 @@ productsRouter.post("/upload-gallery", authMiddleware(["admin", "manager"]), upl
     return res.status(400).json({ error: "Image must be under 5MB" });
   }
   try {
+    console.log("[upload-gallery] Uploading to Cloudinary...");
     let result;
     if (isVideo) {
       result = await uploadVideo(req.file.buffer, "products/videos");
     } else {
       result = await uploadGalleryImage(req.file.buffer, "products/gallery");
     }
+    console.log("[upload-gallery] Success:", result.url);
     res.json({ url: result.url, type: isVideo ? "video" : "image" });
   } catch (err) {
+    console.error("[upload-gallery] Cloudinary error:", err);
     res.status(500).json({ error: err.message });
   }
 });
