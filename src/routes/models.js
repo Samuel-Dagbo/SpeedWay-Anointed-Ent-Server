@@ -44,9 +44,10 @@ modelsRouter.get("/", async (_req, res) => {
       .toArray();
     
     const formatted = models.map(m => ({
-      _id: m._id,
+      id: m._id.toString(),
+      _id: undefined,
       name: m.name,
-      brand_id: m.brand_id,
+      brand_id: m.brand_id?.toString(),
       years: m.years,
       image_url: m.image_url,
       gallery: m.gallery,
@@ -81,7 +82,13 @@ modelsRouter.get("/:id", async (req, res) => {
     
     const m = model[0];
     res.json({
-      ...m,
+      id: m._id.toString(),
+      _id: undefined,
+      name: m.name,
+      brand_id: m.brand_id?.toString(),
+      years: m.years,
+      image_url: m.image_url,
+      gallery: m.gallery,
       brands: { name: m.brand_data?.name }
     });
   } catch (err) {

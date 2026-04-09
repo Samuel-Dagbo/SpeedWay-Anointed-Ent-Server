@@ -29,8 +29,13 @@ brandsRouter.get("/", async (_req, res) => {
       .find({ is_hidden: { $ne: true } })
       .sort({ name: 1 })
       .toArray();
-    setCache(cacheKey, brands, 3600000);
-    res.json(brands);
+    const formatted = brands.map(b => ({
+      ...b,
+      id: b._id.toString(),
+      _id: undefined
+    }));
+    setCache(cacheKey, formatted, 3600000);
+    res.json(formatted);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -40,6 +45,8 @@ brandsRouter.get("/:id", async (req, res) => {
   try {
     const brand = await collections.brands().findOne({ _id: toObjectId(req.params.id) });
     if (!brand) return res.status(404).json({ error: "Brand not found" });
+    brand.id = brand._id.toString();
+    brand._id = undefined;
     res.json(brand);
   } catch (err) {
     res.status(500).json({ error: err.message });

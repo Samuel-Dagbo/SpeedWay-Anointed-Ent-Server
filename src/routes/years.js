@@ -20,8 +20,13 @@ yearsRouter.get("/", async (_req, res) => {
       .find({})
       .sort({ label: -1 })
       .toArray();
-    setCache(cacheKey, years, 3600000);
-    res.json(years);
+    const formatted = years.map(y => ({
+      ...y,
+      id: y._id.toString(),
+      _id: undefined
+    }));
+    setCache(cacheKey, formatted, 3600000);
+    res.json(formatted);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

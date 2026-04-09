@@ -29,8 +29,13 @@ categoriesRouter.get("/", async (_req, res) => {
       .find({})
       .sort({ name: 1 })
       .toArray();
-    setCache(cacheKey, categories, 3600000);
-    res.json(categories);
+    const formatted = categories.map(c => ({
+      ...c,
+      id: c._id.toString(),
+      _id: undefined
+    }));
+    setCache(cacheKey, formatted, 3600000);
+    res.json(formatted);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -40,6 +45,8 @@ categoriesRouter.get("/:id", async (req, res) => {
   try {
     const category = await collections.categories().findOne({ _id: toObjectId(req.params.id) });
     if (!category) return res.status(404).json({ error: "Category not found" });
+    category.id = category._id.toString();
+    category._id = undefined;
     if (category.show_by_brand === undefined) {
       category.show_by_brand = true;
     }

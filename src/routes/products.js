@@ -85,6 +85,30 @@ function parseCsv(raw) {
   });
 }
 
+function transformProductForFrontend(p) {
+  return {
+    id: p._id?.toString() || p.id,
+    _id: undefined,
+    name: p.name,
+    category_id: p.category_id?.toString(),
+    brand_id: p.brand_id?.toString(),
+    model_id: p.model_id?.toString(),
+    year_id: p.year_id?.toString(),
+    price: p.price,
+    cost_price: p.cost_price,
+    quantity: p.quantity,
+    description: p.description,
+    image_url: p.image_url,
+    gallery: p.gallery,
+    status: p.status,
+    created_at: p.created_at,
+    categories: p.categories,
+    brands: p.brands,
+    models: p.models,
+    years: p.years
+  };
+}
+
 productsRouter.get("/", async (req, res) => {
   const { q, brand_id, model_id, year_id, category_id, status, page = 1, limit = 20 } = req.query;
   
@@ -159,12 +183,12 @@ productsRouter.get("/", async (req, res) => {
       collections.products().countDocuments(match)
     ]);
     
-    const filtered = data.map(p => ({
+    const filtered = data.map(p => transformProductForFrontend({
       ...p,
       categories: { name: p.category_data?.name },
       brands: { name: p.brand_data?.name, is_hidden: p.brand_data?.is_hidden },
       models: { name: p.model_data?.name, image_url: p.model_data?.image_url },
-      years: { id: p.year_data?._id, label: p.year_data?.label }
+      years: { id: p.year_data?._id?.toString(), label: p.year_data?.label }
     }));
     
     setCache(cacheKey, {
@@ -301,12 +325,12 @@ productsRouter.get("/all", authMiddleware(["admin", "manager", "staff"]), async 
       ])
       .toArray();
 
-    const filtered = data.map(p => ({
+    const filtered = data.map(p => transformProductForFrontend({
       ...p,
-      categories: { id: p.category_data?._id, name: p.category_data?.name },
-      brands: { id: p.brand_data?._id, name: p.brand_data?.name, is_hidden: p.brand_data?.is_hidden },
-      models: { id: p.model_data?._id, name: p.model_data?.name, image_url: p.model_data?.image_url },
-      years: { id: p.year_data?._id, label: p.year_data?.label }
+      categories: { id: p.category_data?._id?.toString(), name: p.category_data?.name },
+      brands: { id: p.brand_data?._id?.toString(), name: p.brand_data?.name, is_hidden: p.brand_data?.is_hidden },
+      models: { id: p.model_data?._id?.toString(), name: p.model_data?.name, image_url: p.model_data?.image_url },
+      years: { id: p.year_data?._id?.toString(), label: p.year_data?.label }
     }));
     
     setCache(cacheKey, filtered, q ? 10000 : 15000);
@@ -504,13 +528,13 @@ productsRouter.get("/:id", async (req, res) => {
     }
     
     const p = product[0];
-    res.json({
+    res.json(transformProductForFrontend({
       ...p,
       categories: { name: p.category_data?.name },
       brands: { name: p.brand_data?.name },
       models: { name: p.model_data?.name, image_url: p.model_data?.image_url, gallery: p.model_data?.gallery },
-      years: { id: p.year_data?._id, label: p.year_data?.label }
-    });
+      years: { id: p.year_data?._id?.toString(), label: p.year_data?.label }
+    }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
