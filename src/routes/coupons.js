@@ -1,7 +1,7 @@
 import express from "express";
 import { z } from "zod";
-import { supabaseAdmin } from "../services/supabaseClient.js";
-import { authMiddleware } from "../middleware/auth.js";
+import { collections, toObjectId } from "../services/mongodb.js";
+import { authMiddleware } from "./auth.js";
 
 export const couponsRouter = express.Router();
 
@@ -25,27 +25,28 @@ const validateSchema = z.object({
 });
 
 couponsRouter.get("/", authMiddleware("admin"), async (_req, res) => {
-  const { data, error } = await supabaseAdmin
-    .from("coupons")
-    .select("*")
-    .order("created_at", { ascending: false });
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  try {
+    const coupons = await collections.coupons()
+      .find({})
+      .sort({ created_at: -1 })
+      .toArray();
+    res.json(coupons);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 couponsRouter.post("/", authMiddleware("admin"), async (req, res) => {
   try {
     const payload = couponSchema.parse(req.body);
-    const { data, error } = await supabaseAdmin
-      .from("coupons")
-      .insert({
-        ...payload,
-        code: payload.code.toUpperCase()
-      })
-      .select("*")
-      .single();
-    if (error) return res.status(400).json({ error: error.message });
-    res.status(201).json(data);
+    const result = await collections.coupons().insertOne({
+      ...payload,
+      code: payload.code.toUpperCase(),
+      created_at: new Date(),
+      updated_at: new Date()
+    });
+    const inserted = await collections.coupons().findOne({ _id: result.insertedId });
+    res.status(201).json(inserted);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -54,14 +55,13 @@ couponsRouter.post("/", authMiddleware("admin"), async (req, res) => {
 couponsRouter.patch("/:id", authMiddleware("admin"), async (req, res) => {
   try {
     const payload = couponSchema.partial().parse(req.body);
-    const { data, error } = await supabaseAdmin
-      .from("coupons")
-      .update(payload)
-      .eq("id", req.params.id)
-      .select("*")
-      .single();
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
+    const result = await collections.coupons().findOneAndUpdate(
+      { _id: toObjectId(req.params.id) },
+      { $set: { ...payload, updated_at: new Date() } },
+      { returnDocument: "after" }
+    );
+    if (!result) return res.status(404).json({ error: "Coupon not found" });
+    res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -70,39 +70,36 @@ couponsRouter.patch("/:id", authMiddleware("admin"), async (req, res) => {
 couponsRouter.post("/validate", authMiddleware(), async (req, res) => {
   try {
     const { code, total } = validateSchema.parse(req.body);
-    const now = new Date().toISOString();
-    const { data: coupon, error } = await supabaseAdmin
-      .from("coupons")
-      .select("*")
-      .eq("code", code.toUpperCase())
-      .eq("active", true)
-      .maybeSingle();
-    if (error || !coupon) return res.status(404).json({ error: "Invalid coupon" });
+    const now = new Date();
+    
+    const coupon = await collections.coupons().findOne({
+      code: code.toUpperCase(),
+      active: true
+    });
+    if (!coupon) return res.status(404).json({ error: "Invalid coupon" });
 
-    if (coupon.start_at && coupon.start_at > now) {
+    if (coupon.start_at && new Date(coupon.start_at) > now) {
       return res.status(400).json({ error: "Coupon not active yet" });
     }
-    if (coupon.end_at && coupon.end_at < now) {
+    if (coupon.end_at && new Date(coupon.end_at) < now) {
       return res.status(400).json({ error: "Coupon has expired" });
     }
     if (coupon.min_order && total < Number(coupon.min_order)) {
       return res.status(400).json({ error: "Order total too low" });
     }
 
-    const { count: redeemedCount } = await supabaseAdmin
-      .from("coupon_redemptions")
-      .select("id", { count: "exact", head: true })
-      .eq("coupon_id", coupon.id);
-    if (coupon.usage_limit && (redeemedCount || 0) >= coupon.usage_limit) {
+    const redeemedCount = await collections.couponRedemptions().countDocuments({
+      coupon_id: coupon._id
+    });
+    if (coupon.usage_limit && redeemedCount >= coupon.usage_limit) {
       return res.status(400).json({ error: "Coupon usage limit reached" });
     }
 
-    const { count: userCount } = await supabaseAdmin
-      .from("coupon_redemptions")
-      .select("id", { count: "exact", head: true })
-      .eq("coupon_id", coupon.id)
-      .eq("user_id", req.user.id);
-    if (coupon.per_user_limit && (userCount || 0) >= coupon.per_user_limit) {
+    const userCount = await collections.couponRedemptions().countDocuments({
+      coupon_id: coupon._id,
+      user_id: req.user.id
+    });
+    if (coupon.per_user_limit && userCount >= coupon.per_user_limit) {
       return res.status(400).json({ error: "Coupon already used" });
     }
 

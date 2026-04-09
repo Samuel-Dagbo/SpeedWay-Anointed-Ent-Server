@@ -1,6 +1,6 @@
 import express from "express";
 import { z } from "zod";
-import { authMiddleware } from "../middleware/auth.js";
+import { authMiddleware } from "./auth.js";
 import { sendTestEmail } from "../services/emailService.js";
 
 export const emailRouter = express.Router();

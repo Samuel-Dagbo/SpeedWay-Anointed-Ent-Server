@@ -1,7 +1,7 @@
-﻿import express from "express";
+import express from "express";
 import { z } from "zod";
-import { supabaseAdmin } from "../services/supabaseClient.js";
-import { authMiddleware } from "../middleware/auth.js";
+import { collections, toObjectId } from "../services/mongodb.js";
+import { authMiddleware } from "./auth.js";
 import { getCached, setCache, clearCache } from "../server.js";
 
 export const yearsRouter = express.Router();
@@ -15,27 +15,28 @@ yearsRouter.get("/", async (_req, res) => {
   const cached = getCached(cacheKey);
   if (cached) return res.json(cached);
   
-  const { data, error } = await supabaseAdmin
-    .from("years")
-    .select("*")
-    .order("label", { ascending: false });
-  if (error) return res.status(500).json({ error: error.message });
-  
-  setCache(cacheKey, data, 3600000);
-  res.json(data);
+  try {
+    const years = await collections.years()
+      .find({})
+      .sort({ label: -1 })
+      .toArray();
+    setCache(cacheKey, years, 3600000);
+    res.json(years);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 yearsRouter.post("/", authMiddleware("admin"), async (req, res) => {
   try {
     const payload = yearSchema.parse(req.body);
-    const { data, error } = await supabaseAdmin
-      .from("years")
-      .insert(payload)
-      .select("*")
-      .single();
-    if (error) return res.status(400).json({ error: error.message });
+    const result = await collections.years().insertOne({
+      ...payload,
+      created_at: new Date()
+    });
+    const inserted = await collections.years().findOne({ _id: result.insertedId });
     clearCache("years");
-    res.status(201).json(data);
+    res.status(201).json(inserted);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -44,26 +45,26 @@ yearsRouter.post("/", authMiddleware("admin"), async (req, res) => {
 yearsRouter.put("/:id", authMiddleware("admin"), async (req, res) => {
   try {
     const payload = yearSchema.partial().parse(req.body);
-    const { data, error } = await supabaseAdmin
-      .from("years")
-      .update(payload)
-      .eq("id", req.params.id)
-      .select("*")
-      .single();
-    if (error) return res.status(400).json({ error: error.message });
+    const result = await collections.years().findOneAndUpdate(
+      { _id: toObjectId(req.params.id) },
+      { $set: payload },
+      { returnDocument: "after" }
+    );
+    if (!result) return res.status(404).json({ error: "Year not found" });
     clearCache("years");
-    res.json(data);
+    res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
 yearsRouter.delete("/:id", authMiddleware("admin"), async (req, res) => {
-  const { error } = await supabaseAdmin
-    .from("years")
-    .delete()
-    .eq("id", req.params.id);
-  if (error) return res.status(400).json({ error: error.message });
-  clearCache("years");
-  res.status(204).send();
+  try {
+    const result = await collections.years().deleteOne({ _id: toObjectId(req.params.id) });
+    if (result.deletedCount === 0) return res.status(404).json({ error: "Year not found" });
+    clearCache("years");
+    res.status(204).send();
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });

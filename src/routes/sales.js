@@ -1,14 +1,14 @@
 import express from "express";
 import { z } from "zod";
-import { supabaseAdmin } from "../services/supabaseClient.js";
-import { authMiddleware } from "../middleware/auth.js";
+import { collections, toObjectId } from "../services/mongodb.js";
+import { authMiddleware } from "./auth.js";
 import { logAudit } from "../services/audit.js";
 
 export const salesRouter = express.Router();
 
 const saleSchema = z
   .object({
-    product_id: z.string().uuid().optional().nullable(),
+    product_id: z.string().optional().nullable(),
     product_name: z.string().trim().min(1).optional().nullable(),
     quantity: z.number().int().positive(),
     price: z.number().positive(),
@@ -26,26 +26,23 @@ const batchSaleSchema = z.object({
 async function processSale(payload, userId) {
   const total = payload.quantity * payload.price;
 
-  const { data: sale, error } = await supabaseAdmin
-    .from("sales")
-    .insert({
-      product_id: payload.product_id || null,
-      product_name: payload.product_name || null,
-      quantity: payload.quantity,
-      price: payload.price,
-      total,
-      note: payload.note
-    })
-    .select("*")
-    .single();
-  if (error) throw error;
+  const result = await collections.sales().insertOne({
+    product_id: payload.product_id || null,
+    product_name: payload.product_name || null,
+    quantity: payload.quantity,
+    price: payload.price,
+    total,
+    note: payload.note,
+    created_at: new Date()
+  });
 
   if (payload.product_id) {
-    await supabaseAdmin.rpc("decrement_stock_and_log", {
-      p_product_id: payload.product_id,
-      p_quantity: payload.quantity,
-      p_reason: "shop_sale",
-      p_reference: sale.id.toString()
+    await collections.inventory().insertOne({
+      product_id: payload.product_id,
+      quantity: -payload.quantity,
+      reason: "shop_sale",
+      reference: result.insertedId.toString(),
+      created_at: new Date()
     });
   }
 
@@ -53,14 +50,13 @@ async function processSale(payload, userId) {
     actor_id: userId,
     action: "create",
     entity: "sale",
-    entity_id: sale.id,
-    metadata: { total: sale.total, product_name: payload.product_name || null }
+    entity_id: result.insertedId.toString(),
+    metadata: { total: total, product_name: payload.product_name || null }
   });
 
-  return sale;
+  return { _id: result.insertedId, ...payload, total };
 }
 
-// Admin: record single in-store sale
 salesRouter.post("/", authMiddleware(["admin", "manager", "staff"]), async (req, res) => {
   try {
     const payload = saleSchema.parse(req.body);
@@ -71,7 +67,6 @@ salesRouter.post("/", authMiddleware(["admin", "manager", "staff"]), async (req,
   }
 });
 
-// Admin: record batch in-store sales (single transaction)
 salesRouter.post("/batch", authMiddleware(["admin", "manager", "staff"]), async (req, res) => {
   try {
     const { items, note } = batchSaleSchema.parse(req.body);
@@ -110,13 +105,37 @@ salesRouter.post("/batch", authMiddleware(["admin", "manager", "staff"]), async 
   }
 });
 
-// Admin: list sales
 salesRouter.get("/", authMiddleware(["admin", "manager", "staff"]), async (_req, res) => {
-  const { data, error } = await supabaseAdmin
-    .from("sales")
-    .select("*, products(name)")
-    .order("created_at", { ascending: false });
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  try {
+    const sales = await collections.sales()
+      .aggregate([
+        {
+          $lookup: {
+            from: "products",
+            localField: "product_id",
+            foreignField: "_id",
+            as: "product_data"
+          }
+        },
+        { $unwind: { path: "$product_data", preserveNullAndEmptyArrays: true } },
+        {
+          $project: {
+            _id: 1,
+            product_id: 1,
+            product_name: 1,
+            quantity: 1,
+            price: 1,
+            total: 1,
+            note: 1,
+            created_at: 1,
+            products: { name: "$product_data.name" }
+          }
+        },
+        { $sort: { created_at: -1 } }
+      ])
+      .toArray();
+    res.json(sales);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
-

@@ -1,7 +1,7 @@
 import express from "express";
 import { z } from "zod";
-import { supabaseAdmin } from "../services/supabaseClient.js";
-import { authMiddleware } from "../middleware/auth.js";
+import { collections } from "../services/mongodb.js";
+import { authMiddleware } from "./auth.js";
 
 export const settingsRouter = express.Router();
 
@@ -31,13 +31,12 @@ const normalize = (value) => {
 };
 
 settingsRouter.get("/", async (_req, res) => {
-  const { data, error } = await supabaseAdmin
-    .from("site_settings")
-    .select("*")
-    .limit(1)
-    .maybeSingle();
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data || {});
+  try {
+    const settings = await collections.settings().findOne({ singleton: true });
+    res.json(settings || {});
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 settingsRouter.put("/", authMiddleware("admin"), async (req, res) => {
@@ -55,18 +54,16 @@ settingsRouter.put("/", authMiddleware("admin"), async (req, res) => {
       tiktok_url: normalize(payload.tiktok_url),
       linkedin_url: normalize(payload.linkedin_url),
       whatsapp_url: normalize(payload.whatsapp_url),
-      updated_at: new Date().toISOString()
+      updated_at: new Date()
     };
 
-    const { data, error } = await supabaseAdmin
-      .from("site_settings")
-      .upsert(normalized, { onConflict: "singleton" })
-      .select("*")
-      .single();
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
+    const result = await collections.settings().findOneAndUpdate(
+      { singleton: true },
+      { $set: normalized },
+      { upsert: true, returnDocument: "after" }
+    );
+    res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
-

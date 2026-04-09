@@ -1,0 +1,13 @@
+id,email,full_name,role,created_at,password_hash,email_verified
+0d9205f2-71a9-478d-8d18-c99cdf9394cc,kojo.mensah@gmail.com,Kojo Mensah,customer,2026-03-14 22:12:45.494285+00,$2a$10$7EqJtq98hPqEX7fNZaFWoOQ4N0v1O/9wHfB0V8/9G3XvA32YVtq9e,true
+18044fdb-f938-455d-8699-b6e5b235ab16,efua.darko@gmail.com,Efua Darko,customer,2026-03-14 22:12:45.494285+00,$2a$10$7EqJtq98hPqEX7fNZaFWoOQ4N0v1O/9wHfB0V8/9G3XvA32YVtq9e,true
+220f0bb0-043f-4127-8dad-c667a312637c,boamahd988@gmail.com,David Boamah,admin,2026-03-27 16:38:53.0047+00,$2a$10$1qq7KdzBKSHsT.lDHj61P.djH2hGfqP2PdvG/CgSoMNbZw1myyok2,true
+377d82bb-aab0-4a63-8d19-441cf6288180,abena.owusu@gmail.com,Abena Owusu,customer,2026-03-14 22:12:45.494285+00,$2a$10$7EqJtq98hPqEX7fNZaFWoOQ4N0v1O/9wHfB0V8/9G3XvA32YVtq9e,true
+39f79eb9-c104-48dc-901f-a94bb19e3776,yaw.owusu@gmail.com,Yaw Owusu,customer,2026-03-14 22:12:45.494285+00,$2a$10$7EqJtq98hPqEX7fNZaFWoOQ4N0v1O/9wHfB0V8/9G3XvA32YVtq9e,true
+70d8d2a8-0ddf-46e5-bdf9-7f325388fe19,priscilla.asare@gmail.com,Priscilla Asare,customer,2026-03-14 22:12:45.494285+00,$2a$10$7EqJtq98hPqEX7fNZaFWoOQ4N0v1O/9wHfB0V8/9G3XvA32YVtq9e,true
+836860d7-9871-4cd1-951e-5ad797648cec,samueldagbo50@gmail.com,Samuel Dagbo,admin,2026-03-16 23:29:51.450903+00,$2a$10$Zp4QcII/g.eQOMgAsaCkteU.5IAMkkB.N2RTC.u7Z05d/QlLMp2xW,true
+84cc9a38-57fd-4f5b-b4be-0694e5f31c77,kofi.adjei@gmail.com,Kofi Adjei,customer,2026-03-14 22:12:45.494285+00,$2a$10$7EqJtq98hPqEX7fNZaFWoOQ4N0v1O/9wHfB0V8/9G3XvA32YVtq9e,true
+877152ab-a333-4587-b32c-c9f956171339,ama.boateng@gmail.com,Ama Boateng,customer,2026-03-14 22:12:45.494285+00,$2a$10$7EqJtq98hPqEX7fNZaFWoOQ4N0v1O/9wHfB0V8/9G3XvA32YVtq9e,true
+d2764b5d-82f8-4ef8-861a-cc1d67b9bcda,speedwayanointedent@gmail.com,Speedway Admin,admin,2026-03-14 17:10:59.12995+00,$2a$10$3ZtT6UXqc6TLD83cWE/HsuiCNfIrp/SpHPm2oPKnH2F7LVN0c8V8q,true
+eb1af2b6-d178-4393-afbb-b036592e1252,kwame.mensah@gmail.com,Kwame Mensah,customer,2026-03-14 22:12:45.494285+00,$2a$10$7EqJtq98hPqEX7fNZaFWoOQ4N0v1O/9wHfB0V8/9G3XvA32YVtq9e,true
+f2892f78-8118-474e-b9ed-d7ca56a2b62e,francaosae@gmail.com,"Francisa Osei ",admin,2026-03-27 16:28:02.025559+00,$2a$10$FmnOL6oLjAdu/1FLKZfzruzgjxfO.ZHPixAJahoYQSprVbDyAGx02,true

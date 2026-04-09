@@ -1,7 +1,7 @@
 import express from "express";
 import { z } from "zod";
-import { supabaseAdmin } from "../services/supabaseClient.js";
-import { authMiddleware } from "../middleware/auth.js";
+import { collections, toObjectId } from "../services/mongodb.js";
+import { authMiddleware } from "./auth.js";
 
 export const addressesRouter = express.Router();
 
@@ -18,31 +18,34 @@ const addressSchema = z.object({
 });
 
 addressesRouter.get("/", authMiddleware(), async (req, res) => {
-  const { data, error } = await supabaseAdmin
-    .from("user_addresses")
-    .select("*")
-    .eq("user_id", req.user.id)
-    .order("created_at", { ascending: false });
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  try {
+    const addresses = await collections.addresses()
+      .find({ user_id: req.user.id })
+      .sort({ created_at: -1 })
+      .toArray();
+    res.json(addresses);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 addressesRouter.post("/", authMiddleware(), async (req, res) => {
   try {
     const payload = addressSchema.parse(req.body);
     if (payload.is_default) {
-      await supabaseAdmin
-        .from("user_addresses")
-        .update({ is_default: false })
-        .eq("user_id", req.user.id);
+      await collections.addresses().updateMany(
+        { user_id: req.user.id },
+        { $set: { is_default: false } }
+      );
     }
-    const { data, error } = await supabaseAdmin
-      .from("user_addresses")
-      .insert({ ...payload, user_id: req.user.id })
-      .select("*")
-      .single();
-    if (error) return res.status(400).json({ error: error.message });
-    res.status(201).json(data);
+    const result = await collections.addresses().insertOne({
+      ...payload,
+      user_id: req.user.id,
+      created_at: new Date(),
+      updated_at: new Date()
+    });
+    const inserted = await collections.addresses().findOne({ _id: result.insertedId });
+    res.status(201).json(inserted);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -52,31 +55,32 @@ addressesRouter.put("/:id", authMiddleware(), async (req, res) => {
   try {
     const payload = addressSchema.partial().parse(req.body);
     if (payload.is_default) {
-      await supabaseAdmin
-        .from("user_addresses")
-        .update({ is_default: false })
-        .eq("user_id", req.user.id);
+      await collections.addresses().updateMany(
+        { user_id: req.user.id },
+        { $set: { is_default: false } }
+      );
     }
-    const { data, error } = await supabaseAdmin
-      .from("user_addresses")
-      .update(payload)
-      .eq("id", req.params.id)
-      .eq("user_id", req.user.id)
-      .select("*")
-      .single();
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
+    const result = await collections.addresses().findOneAndUpdate(
+      { _id: toObjectId(req.params.id), user_id: req.user.id },
+      { $set: { ...payload, updated_at: new Date() } },
+      { returnDocument: "after" }
+    );
+    if (!result) return res.status(404).json({ error: "Address not found" });
+    res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
 addressesRouter.delete("/:id", authMiddleware(), async (req, res) => {
-  const { error } = await supabaseAdmin
-    .from("user_addresses")
-    .delete()
-    .eq("id", req.params.id)
-    .eq("user_id", req.user.id);
-  if (error) return res.status(400).json({ error: error.message });
-  res.status(204).send();
+  try {
+    const result = await collections.addresses().deleteOne({
+      _id: toObjectId(req.params.id),
+      user_id: req.user.id
+    });
+    if (result.deletedCount === 0) return res.status(404).json({ error: "Address not found" });
+    res.status(204).send();
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });

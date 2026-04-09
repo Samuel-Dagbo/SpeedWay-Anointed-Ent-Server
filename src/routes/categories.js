@@ -1,17 +1,16 @@
-﻿import express from "express";
+import express from "express";
 import { z } from "zod";
 import multer from "multer";
-import sharp from "sharp";
-import crypto from "crypto";
-import { supabaseAdmin } from "../services/supabaseClient.js";
-import { authMiddleware } from "../middleware/auth.js";
+import { collections, toObjectId } from "../services/mongodb.js";
+import { uploadImage } from "../services/cloudinary.js";
+import { authMiddleware } from "./auth.js";
 import { getCached, setCache, clearCache } from "../server.js";
 
 export const categoriesRouter = express.Router();
 
 const categorySchema = z.object({
   name: z.string(),
-  image_url: z.string().nullable(),
+  image_url: z.string().nullable().optional(),
   show_by_brand: z.boolean().default(true)
 });
 
@@ -20,66 +19,47 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }
 });
 
-async function uploadImage(file, folder = "categories") {
-  const bucket = process.env.SUPABASE_STORAGE_BUCKET || "product-images";
-  const filename = `${folder}/${crypto.randomUUID()}.jpg`;
-  const processed = await sharp(file.buffer)
-    .resize({ width: 1200, withoutEnlargement: true })
-    .jpeg({ quality: 80 })
-    .toBuffer();
-
-  const { error } = await supabaseAdmin.storage
-    .from(bucket)
-    .upload(filename, processed, {
-      contentType: "image/jpeg",
-      upsert: true
-    });
-  if (error) throw error;
-
-  const { data } = supabaseAdmin.storage.from(bucket).getPublicUrl(filename);
-  return data.publicUrl;
-}
-
 categoriesRouter.get("/", async (_req, res) => {
   const cacheKey = "categories:all";
   const cached = getCached(cacheKey);
   if (cached) return res.json(cached);
   
-  const { data, error } = await supabaseAdmin
-    .from("categories")
-    .select("*")
-    .order("name", { ascending: true });
-  if (error) return res.status(500).json({ error: error.message });
-  
-  setCache(cacheKey, data, 3600000);
-  res.json(data);
+  try {
+    const categories = await collections.categories()
+      .find({})
+      .sort({ name: 1 })
+      .toArray();
+    setCache(cacheKey, categories, 3600000);
+    res.json(categories);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 categoriesRouter.get("/:id", async (req, res) => {
-  const { data, error } = await supabaseAdmin
-    .from("categories")
-    .select("*")
-    .eq("id", req.params.id)
-    .maybeSingle();
-  if (error) return res.status(500).json({ error: error.message });
-  if (!data) return res.status(404).json({ error: "Category not found" });
-  if (data.show_by_brand === undefined) {
-    data.show_by_brand = true;
+  try {
+    const category = await collections.categories().findOne({ _id: toObjectId(req.params.id) });
+    if (!category) return res.status(404).json({ error: "Category not found" });
+    if (category.show_by_brand === undefined) {
+      category.show_by_brand = true;
+    }
+    res.json(category);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-  res.json(data);
 });
 
 categoriesRouter.post("/", authMiddleware("admin"), async (req, res) => {
   try {
     const payload = categorySchema.parse(req.body);
-    const { data, error } = await supabaseAdmin
-      .from("categories")
-      .insert(payload)
-      .select("*")
-      .single();
-    if (error) return res.status(400).json({ error: error.message });
+    const result = await collections.categories().insertOne({
+      ...payload,
+      created_at: new Date(),
+      updated_at: new Date()
+    });
+    const inserted = await collections.categories().findOne({ _id: result.insertedId });
     clearCache("categories");
-    res.status(201).json(data);
+    res.status(201).json(inserted);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -88,28 +68,28 @@ categoriesRouter.post("/", authMiddleware("admin"), async (req, res) => {
 categoriesRouter.put("/:id", authMiddleware("admin"), async (req, res) => {
   try {
     const payload = categorySchema.partial().parse(req.body);
-    const { data, error } = await supabaseAdmin
-      .from("categories")
-      .update(payload)
-      .eq("id", req.params.id)
-      .select("*")
-      .single();
-    if (error) return res.status(400).json({ error: error.message });
+    const result = await collections.categories().findOneAndUpdate(
+      { _id: toObjectId(req.params.id) },
+      { $set: { ...payload, updated_at: new Date() } },
+      { returnDocument: "after" }
+    );
+    if (!result) return res.status(404).json({ error: "Category not found" });
     clearCache("categories");
-    res.json(data);
+    res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
 categoriesRouter.delete("/:id", authMiddleware("admin"), async (req, res) => {
-  const { error } = await supabaseAdmin
-    .from("categories")
-    .delete()
-    .eq("id", req.params.id);
-  if (error) return res.status(400).json({ error: error.message });
-  clearCache("categories");
-  res.status(204).send();
+  try {
+    const result = await collections.categories().deleteOne({ _id: toObjectId(req.params.id) });
+    if (result.deletedCount === 0) return res.status(404).json({ error: "Category not found" });
+    clearCache("categories");
+    res.status(204).send();
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 categoriesRouter.get("/:id/products-by-model", async (req, res) => {
@@ -118,33 +98,73 @@ categoriesRouter.get("/:id/products-by-model", async (req, res) => {
   if (cached) return res.json(cached);
 
   try {
-    const { data: products, error } = await supabaseAdmin
-      .from("products")
-      .select(`
-        id, name, price, quantity, image_url, status, brand_id, model_id,
-        models(id, name, image_url, brand_id, brands(id, name, logo_url, is_hidden)),
-        brands(id, name, logo_url, is_hidden)
-      `)
-      .eq("category_id", req.params.id)
-      .eq("status", "active")
-      .eq("is_deleted", false);
-
-    if (error) throw error;
+    const products = await collections.products()
+      .aggregate([
+        {
+          $match: {
+            category_id: req.params.id,
+            status: "active",
+            is_deleted: { $ne: true }
+          }
+        },
+        {
+          $lookup: {
+            from: "models",
+            localField: "model_id",
+            foreignField: "_id",
+            as: "model_data"
+          }
+        },
+        {
+          $lookup: {
+            from: "brands",
+            localField: "brand_id",
+            foreignField: "_id",
+            as: "brand_data"
+          }
+        },
+        {
+          $unwind: { path: "$model_data", preserveNullAndEmptyArrays: true }
+        },
+        {
+          $unwind: { path: "$brand_data", preserveNullAndEmptyArrays: true }
+        },
+        {
+          $lookup: {
+            from: "brands",
+            localField: "model_data.brand_id",
+            foreignField: "_id",
+            as: "model_brand"
+          }
+        },
+        {
+          $unwind: { path: "$model_brand", preserveNullAndEmptyArrays: true }
+        },
+        {
+          $match: {
+            $or: [
+              { "brand_data.is_hidden": { $ne: true } },
+              { "model_brand.is_hidden": { $ne: true } }
+            ]
+          }
+        }
+      ])
+      .toArray();
 
     const brandGroups = {};
     (products || []).forEach(p => {
-      const productBrand = p.brands;
-      const modelBrand = p.models?.brands;
+      const productBrand = p.brand_data;
+      const modelBrand = p.model_brand;
       const hidden = productBrand?.is_hidden || modelBrand?.is_hidden;
       if (hidden) return;
 
-      const brandId = p.brand_id || modelBrand?.id || "generic";
+      const brandId = p.brand_id || modelBrand?._id?.toString() || "generic";
       const brandName = productBrand?.name || modelBrand?.name || "Other";
       const brandLogo = productBrand?.logo_url || modelBrand?.logo_url || null;
 
-      const modelId = p.model_id || "__nomodel";
-      const modelName = p.models?.name || null;
-      const modelImage = p.models?.image_url || null;
+      const modelId = p.model_id?.toString() || "__nomodel";
+      const modelName = p.model_data?.name || null;
+      const modelImage = p.model_data?.image_url || null;
 
       if (!brandGroups[brandId]) {
         brandGroups[brandId] = {
@@ -165,7 +185,7 @@ categoriesRouter.get("/:id/products-by-model", async (req, res) => {
       }
 
       brandGroups[brandId].models[modelId].products.push({
-        id: p.id,
+        id: p._id.toString(),
         name: p.name,
         price: p.price,
         quantity: p.quantity,
@@ -193,10 +213,9 @@ categoriesRouter.post("/upload", authMiddleware("admin"), upload.single("image")
     return res.status(400).json({ error: "No file uploaded" });
   }
   try {
-    const imageUrl = await uploadImage(req.file, "categories");
-    res.json({ url: imageUrl });
+    const result = await uploadImage(req.file.buffer, "categories");
+    res.json({ url: result.url });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
-

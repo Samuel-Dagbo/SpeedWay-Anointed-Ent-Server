@@ -1,7 +1,7 @@
-﻿import express from "express";
+import express from "express";
 import { z } from "zod";
-import { supabaseAdmin } from "../services/supabaseClient.js";
-import { authMiddleware } from "../middleware/auth.js";
+import { collections } from "../services/mongodb.js";
+import { authMiddleware } from "./auth.js";
 import { getCached, setCache } from "../server.js";
 
 export const reportsRouter = express.Router();
@@ -12,29 +12,27 @@ const rangeSchema = z.object({
 });
 
 async function aggregateSales(from, to) {
-  const { data: orderAgg, error: orderErr } = await supabaseAdmin
-    .from("orders")
-    .select("total, created_at")
-    .gte("created_at", from)
-    .lte("created_at", to)
-    .eq("status", "completed");
-  if (orderErr) throw orderErr;
-
-  const { data: shopSales, error: salesErr } = await supabaseAdmin
-    .from("sales")
-    .select("total, created_at, quantity, product_id")
-    .gte("created_at", from)
-    .lte("created_at", to);
-  if (salesErr) throw salesErr;
+  const [orderAgg, shopSales] = await Promise.all([
+    collections.orders()
+      .find({
+        created_at: { $gte: new Date(from), $lte: new Date(to) },
+        status: "completed"
+      })
+      .project({ total: 1, created_at: 1 })
+      .toArray(),
+    collections.sales()
+      .find({
+        created_at: { $gte: new Date(from), $lte: new Date(to) }
+      })
+      .project({ total: 1, quantity: 1, created_at: 1 })
+      .toArray()
+  ]);
 
   const revenue =
-    (orderAgg || []).reduce((sum, o) => sum + (o.total || 0), 0) +
-    (shopSales || []).reduce((sum, s) => sum + (s.total || 0), 0);
+    orderAgg.reduce((sum, o) => sum + (o.total || 0), 0) +
+    shopSales.reduce((sum, s) => sum + (s.total || 0), 0);
 
-  const itemsSold = (shopSales || []).reduce(
-    (sum, s) => sum + (s.quantity || 0),
-    0
-  );
+  const itemsSold = shopSales.reduce((sum, s) => sum + (s.quantity || 0), 0);
 
   return { revenue, itemsSold };
 }
@@ -90,13 +88,13 @@ reportsRouter.get("/sales/daily", authMiddleware(["admin", "manager", "staff"]),
   if (cached) return res.json(cached);
 
   try {
-    const { data: sales, error } = await supabaseAdmin
-      .from("sales")
-      .select("total, quantity, created_at");
-    if (error) throw error;
+    const sales = await collections.sales()
+      .find({})
+      .project({ total: 1, quantity: 1, created_at: 1 })
+      .toArray();
 
     const bucket = new Map();
-    (sales || []).forEach((s) => {
+    sales.forEach((s) => {
       const date = new Date(s.created_at);
       const key = date.toISOString().slice(0, 10);
       const current = bucket.get(key) || { total: 0, quantity: 0 };
@@ -126,17 +124,34 @@ reportsRouter.get(
     if (cached) return res.json(cached);
 
     try {
-      const { data: sales, error } = await supabaseAdmin
-        .from("sales")
-        .select("total, quantity, product_id, products(name)");
-      if (error) throw error;
+      const sales = await collections.sales()
+        .aggregate([
+          {
+            $lookup: {
+              from: "products",
+              localField: "product_id",
+              foreignField: "_id",
+              as: "product_data"
+            }
+          },
+          { $unwind: { path: "$product_data", preserveNullAndEmptyArrays: true } },
+          {
+            $project: {
+              product_id: 1,
+              total: 1,
+              quantity: 1,
+              name: "$product_data.name"
+            }
+          }
+        ])
+        .toArray();
 
       const bucket = new Map();
-      (sales || []).forEach((s) => {
-        const key = s.product_id;
+      sales.forEach((s) => {
+        const key = s.product_id?.toString();
         const current = bucket.get(key) || {
           product_id: key,
-          name: s.products?.name || "Unknown",
+          name: s.name || "Unknown",
           total: 0,
           quantity: 0
         };
@@ -161,23 +176,40 @@ reportsRouter.get(
   authMiddleware(["admin", "manager", "staff"]),
   async (_req, res) => {
     const cacheKey = "report_customers_insights";
-    const cached = getCached(cacheKey);
+    const cached = getCache(cacheKey);
     if (cached) return res.json(cached);
 
     try {
-      const { data: orders, error } = await supabaseAdmin
-        .from("orders")
-        .select("id, total, user_id, users(full_name, email)")
-        .eq("status", "completed");
-      if (error) throw error;
+      const orders = await collections.orders()
+        .aggregate([
+          { $match: { status: "completed" } },
+          {
+            $lookup: {
+              from: "users",
+              localField: "user_id",
+              foreignField: "_id",
+              as: "user_data"
+            }
+          },
+          { $unwind: { path: "$user_data", preserveNullAndEmptyArrays: true } },
+          {
+            $project: {
+              user_id: 1,
+              total: 1,
+              "user_data.full_name": 1,
+              "user_data.email": 1
+            }
+          }
+        ])
+        .toArray();
 
       const bucket = new Map();
-      (orders || []).forEach((o) => {
+      orders.forEach((o) => {
         const key = o.user_id || "guest";
         const current = bucket.get(key) || {
           user_id: o.user_id,
-          name: o.users?.full_name || "Guest",
-          email: o.users?.email || "",
+          name: o.user_data?.full_name || "Guest",
+          email: o.user_data?.email || "",
           order_count: 0,
           total_spent: 0
         };
@@ -203,4 +235,3 @@ reportsRouter.get(
     }
   }
 );
-

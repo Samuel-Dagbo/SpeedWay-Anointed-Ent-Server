@@ -1,7 +1,7 @@
 import express from "express";
 import { z } from "zod";
-import { supabaseAdmin } from "../services/supabaseClient.js";
-import { authMiddleware } from "../middleware/auth.js";
+import { collections, toObjectId } from "../services/mongodb.js";
+import { authMiddleware } from "./auth.js";
 
 export const cartRouter = express.Router();
 
@@ -16,53 +16,76 @@ const cartSchema = z.object({
 });
 
 async function ensureCart(userId) {
-  const { data } = await supabaseAdmin
-    .from("carts")
-    .select("*")
-    .eq("user_id", userId)
-    .eq("status", "active")
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  if (data) return data;
-  const { data: created } = await supabaseAdmin
-    .from("carts")
-    .insert({ user_id: userId, status: "active" })
-    .select("*")
-    .single();
-  return created;
+  let cart = await collections.cart().findOne({ user_id: userId, status: "active" });
+  if (!cart) {
+    const result = await collections.cart().insertOne({
+      user_id: userId,
+      status: "active",
+      created_at: new Date(),
+      updated_at: new Date()
+    });
+    cart = { _id: result.insertedId, user_id: userId, status: "active" };
+  }
+  return cart;
 }
 
 cartRouter.get("/", authMiddleware(), async (req, res) => {
-  const cart = await ensureCart(req.user.id);
-  const { data, error } = await supabaseAdmin
-    .from("cart_items")
-    .select("id, quantity, price, products(id, name, image_url)")
-    .eq("cart_id", cart.id)
-    .order("created_at", { ascending: true });
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ cart, items: data || [] });
+  try {
+    const cart = await ensureCart(req.user.id);
+    const items = await collections.cartItems()
+      .aggregate([
+        { $match: { cart_id: cart._id } },
+        {
+          $lookup: {
+            from: "products",
+            localField: "product_id",
+            foreignField: "_id",
+            as: "product_data"
+          }
+        },
+        { $unwind: { path: "$product_data", preserveNullAndEmptyArrays: true } },
+        {
+          $project: {
+            _id: 1,
+            quantity: 1,
+            price: 1,
+            "product_data._id": 1,
+            "product_data.name": 1,
+            "product_data.image_url": 1,
+            products: { id: "$product_data._id", name: "$product_data.name", image_url: "$product_data.image_url" }
+          }
+        },
+        { $sort: { created_at: 1 } }
+      ])
+      .toArray();
+    res.json({ cart, items });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 cartRouter.put("/", authMiddleware(), async (req, res) => {
   try {
     const payload = cartSchema.parse(req.body);
     const cart = await ensureCart(req.user.id);
-    await supabaseAdmin.from("cart_items").delete().eq("cart_id", cart.id);
+    
+    await collections.cartItems().deleteMany({ cart_id: cart._id });
+    
     if (payload.items.length > 0) {
       const rows = payload.items.map((item) => ({
-        cart_id: cart.id,
+        cart_id: cart._id,
         product_id: item.product_id,
         quantity: item.quantity,
-        price: item.price
+        price: item.price,
+        created_at: new Date()
       }));
-      const { error } = await supabaseAdmin.from("cart_items").insert(rows);
-      if (error) return res.status(400).json({ error: error.message });
+      await collections.cartItems().insertMany(rows);
     }
-    await supabaseAdmin
-      .from("carts")
-      .update({ updated_at: new Date().toISOString() })
-      .eq("id", cart.id);
+    
+    await collections.cart().updateOne(
+      { _id: cart._id },
+      { $set: { updated_at: new Date() } }
+    );
     res.json({ message: "Cart updated" });
   } catch (err) {
     res.status(400).json({ error: err.message });

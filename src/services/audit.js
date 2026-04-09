@@ -1,13 +1,14 @@
-import { supabaseAdmin } from "./supabaseClient.js";
+import { collections } from "./mongodb.js";
 
 export async function logAudit({ actor_id, action, entity, entity_id, metadata }) {
   try {
-    await supabaseAdmin.from("audit_logs").insert({
+    await collections.auditLogs().insertOne({
       actor_id,
       action,
       entity,
       entity_id: entity_id ? String(entity_id) : null,
-      metadata: metadata || null
+      metadata: metadata || {},
+      created_at: new Date()
     });
   } catch (err) {
     console.warn("[audit] failed", err?.message || err);

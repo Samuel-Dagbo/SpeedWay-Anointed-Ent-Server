@@ -1,10 +1,10 @@
-﻿import express from "express";
+import express from "express";
 import { z } from "zod";
 import multer from "multer";
-import sharp from "sharp";
 import crypto from "crypto";
-import { supabaseAdmin } from "../services/supabaseClient.js";
-import { authMiddleware } from "../middleware/auth.js";
+import { collections, toObjectId } from "../services/mongodb.js";
+import { uploadImage, uploadGalleryImage } from "../services/cloudinary.js";
+import { authMiddleware } from "./auth.js";
 import { logAudit } from "../services/audit.js";
 import { getCached, setCache, clearCache } from "../server.js";
 import { generateProductImage, generateSearchKeywords } from "../services/gemini.js";
@@ -33,7 +33,7 @@ const productSchema = z.object({
       return Array.isArray(val) ? val : [];
     },
     z.array(z.object({
-      url: z.string().url(),
+      url: z.string(),
       type: z.enum(["image", "video"]).default("image")
     })).default([])
   ),
@@ -55,68 +55,17 @@ function maybeUpload(req, res, next) {
   return next();
 }
 
-async function uploadProductImage(file, folder = "products") {
-  const bucket = process.env.SUPABASE_STORAGE_BUCKET || "product-images";
-  const filename = `${folder}/${crypto.randomUUID()}.jpg`;
-  const processed = await sharp(file.buffer)
-    .resize({ width: 1400, withoutEnlargement: true })
-    .jpeg({ quality: 80 })
-    .toBuffer();
-
-  const { error } = await supabaseAdmin.storage
-    .from(bucket)
-    .upload(filename, processed, {
-      contentType: "image/jpeg",
-      upsert: true
-    });
-  if (error) throw error;
-
-  const { data } = supabaseAdmin.storage.from(bucket).getPublicUrl(filename);
-  return data.publicUrl;
-}
-
-async function uploadGalleryFile(file, folder = "products/gallery") {
-  const bucket = process.env.SUPABASE_STORAGE_BUCKET || "product-images";
-  const isVideo = file.mimetype.startsWith("video/");
-  const ext = isVideo
-    ? (file.mimetype.includes("mp4") ? "mp4" : file.mimetype.includes("webm") ? "webm" : "mp4")
-    : "jpg";
-  const filename = `${folder}/${crypto.randomUUID()}.${ext}`;
-
-  let buffer = file.buffer;
-  let contentType = file.mimetype;
-
-  if (!isVideo) {
-    buffer = await sharp(file.buffer)
-      .resize({ width: 1400, withoutEnlargement: true })
-      .jpeg({ quality: 80 })
-      .toBuffer();
-    contentType = "image/jpeg";
-  }
-
-  const { error } = await supabaseAdmin.storage
-    .from(bucket)
-    .upload(filename, buffer, { contentType, upsert: true });
-  if (error) throw error;
-
-  const { data } = supabaseAdmin.storage.from(bucket).getPublicUrl(filename);
-  return { url: data.publicUrl, type: isVideo ? "video" : "image" };
-}
-
-async function getOrCreateByName(table, name, extra = {}) {
+async function getOrCreateByName(collection, name, extra = {}) {
   if (!name) return null;
-  const { data: existing } = await supabaseAdmin
-    .from(table)
-    .select("*")
-    .eq("name", name)
-    .maybeSingle();
+  const existing = await collections[collection]().findOne({ name });
   if (existing) return existing;
-  const { data: created } = await supabaseAdmin
-    .from(table)
-    .insert({ name, ...extra })
-    .select("*")
-    .single();
-  return created;
+  const result = await collections[collection]().insertOne({
+    name,
+    ...extra,
+    created_at: new Date(),
+    updated_at: new Date()
+  });
+  return { ...extra, _id: result.insertedId, name };
 }
 
 function parseCsv(raw) {
@@ -147,96 +96,139 @@ productsRouter.get("/", async (req, res) => {
   const limitNum = Math.min(10000, Math.max(1, parseInt(limit) || 20));
   const offset = (pageNum - 1) * limitNum;
   
-  let query = supabaseAdmin
-    .from("products")
-    .select(
-      "*, categories(name), brands(name, is_hidden), models(name, image_url), years(id, label)",
-      { count: "exact" }
-    )
-    .eq("is_deleted", false);
-
-  if (q) {
-    // Case-insensitive partial match search
-    const searchQ = q.trim();
-    query = query.or(
-      `name.ilike.%${searchQ}%,categories.name.ilike.%${searchQ}%,brands.name.ilike.%${searchQ}%,models.name.ilike.%${searchQ}%`
-    );
-  }
-  if (brand_id) {
-    query = query.eq("brand_id", brand_id);
-  }
-  if (model_id) {
-    query = query.eq("model_id", model_id);
-  }
-  if (year_id) {
-    query = query.eq("year_id", year_id);
-  }
-  if (category_id) {
-    query = query.eq("category_id", category_id);
-  }
-  if (status) {
-    query = query.eq("status", status);
-  }
-
-  const { data, error, count } = await query
-    .order("created_at", { ascending: false })
-    .range(offset, offset + limitNum - 1);
+  try {
+    const match = { is_deleted: { $ne: true } };
+    if (brand_id) match.brand_id = toObjectId(brand_id);
+    if (model_id) match.model_id = toObjectId(model_id);
+    if (year_id) match.year_id = toObjectId(year_id);
+    if (category_id) match.category_id = category_id;
+    if (status) match.status = status;
     
-  if (error) return res.status(500).json({ error: error.message });
-  
-  const filtered = data.filter(p => !p.brands?.is_hidden);
-  
-  // Calculate total visible products (approximate based on current page)
-  // Since we can't easily get total without hidden brands in one query,
-  // we use: visible count = total - hidden brands count
-  const hiddenInPage = data.filter(p => p.brands?.is_hidden).length;
-  const visibleInPage = filtered.length;
-  const estimatedTotal = count - hiddenInPage + visibleInPage;
-  
-  const result = {
-    data: filtered,
-    pagination: {
-      page: pageNum,
-      limit: limitNum,
-      total: estimatedTotal,
-      totalPages: Math.max(1, Math.ceil(estimatedTotal / limitNum))
+    if (q) {
+      match.$or = [
+        { name: { $regex: q, $options: "i" } }
+      ];
     }
-  };
-  
-  setCache(cacheKey, result, q ? 10000 : 30000);
-  res.json(result);
+    
+    const [data, countResult] = await Promise.all([
+      collections.products()
+        .aggregate([
+          { $match: match },
+          {
+            $lookup: {
+              from: "categories",
+              localField: "category_id",
+              foreignField: "_id",
+              as: "category_data"
+            }
+          },
+          {
+            $lookup: {
+              from: "brands",
+              localField: "brand_id",
+              foreignField: "_id",
+              as: "brand_data"
+            }
+          },
+          {
+            $lookup: {
+              from: "models",
+              localField: "model_id",
+              foreignField: "_id",
+              as: "model_data"
+            }
+          },
+          {
+            $lookup: {
+              from: "years",
+              localField: "year_id",
+              foreignField: "_id",
+              as: "year_data"
+            }
+          },
+          { $unwind: { path: "$category_data", preserveNullAndEmptyArrays: true } },
+          { $unwind: { path: "$brand_data", preserveNullAndEmptyArrays: true } },
+          { $unwind: { path: "$model_data", preserveNullAndEmptyArrays: true } },
+          { $unwind: { path: "$year_data", preserveNullAndEmptyArrays: true } },
+          { $match: { "brand_data.is_hidden": { $ne: true } } },
+          { $sort: { created_at: -1 } },
+          { $skip: offset },
+          { $limit: limitNum }
+        ])
+        .toArray(),
+      collections.products().countDocuments(match)
+    ]);
+    
+    const filtered = data.map(p => ({
+      ...p,
+      categories: { name: p.category_data?.name },
+      brands: { name: p.brand_data?.name, is_hidden: p.brand_data?.is_hidden },
+      models: { name: p.model_data?.name, image_url: p.model_data?.image_url },
+      years: { id: p.year_data?._id, label: p.year_data?.label }
+    }));
+    
+    setCache(cacheKey, {
+      data: filtered,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total: countResult,
+        totalPages: Math.max(1, Math.ceil(countResult / limitNum))
+      }
+    }, q ? 10000 : 30000);
+    res.json({
+      data: filtered,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total: countResult,
+        totalPages: Math.max(1, Math.ceil(countResult / limitNum))
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// Get products count by category
 productsRouter.get("/by-category", async (req, res) => {
   const cacheKey = "categories_with_counts_visible";
   const cached = getCached(cacheKey);
   if (cached) return res.json(cached);
   
   try {
-    const { data: categories, error } = await supabaseAdmin
-      .from("categories")
-      .select("id, name, image_url");
+    const categories = await collections.categories()
+      .find({})
+      .project({ _id: 1, name: 1, image_url: 1 })
+      .toArray();
     
-    if (error) throw error;
-    
-    const { data: counts } = await supabaseAdmin
-      .from("products")
-      .select("category_id, brands(is_hidden)", { count: "exact", head: false })
-      .eq("is_deleted", false);
+    const counts = await collections.products()
+      .aggregate([
+        { $match: { is_deleted: { $ne: true } } },
+        {
+          $lookup: {
+            from: "brands",
+            localField: "brand_id",
+            foreignField: "_id",
+            as: "brand_data"
+          }
+        },
+        { $unwind: { path: "$brand_data", preserveNullAndEmptyArrays: true } },
+        { $match: { "brand_data.is_hidden": { $ne: true } } },
+        { $group: { _id: "$category_id", count: { $sum: 1 } } }
+      ])
+      .toArray();
     
     const countMap = {};
-    (counts || []).forEach((p) => {
-      if (p.category_id && !p.brands?.is_hidden) {
-        countMap[p.category_id] = (countMap[p.category_id] || 0) + 1;
-      }
+    counts.forEach(c => {
+      countMap[c._id] = c.count;
     });
     
-    const result = (categories || []).map((cat) => ({
-      id: cat.id,
+    const result = categories.map(cat => ({
+      _id: cat._id.toString(),
+      id: cat._id.toString(),
       name: cat.name,
       image_url: cat.image_url,
-      product_count: countMap[cat.id] || 0
+      product_count: countMap[cat._id.toString()] || 0
     }));
     
     setCache(cacheKey, result, 60000);
@@ -247,8 +239,6 @@ productsRouter.get("/by-category", async (req, res) => {
   }
 });
 
-// Admin endpoint: returns all products with optional search and filtering
-// Supports: q (search), status, category_id, brand_id
 productsRouter.get("/all", authMiddleware(["admin", "manager", "staff"]), async (req, res) => {
   const { q, status, category_id, brand_id } = req.query;
 
@@ -256,70 +246,152 @@ productsRouter.get("/all", authMiddleware(["admin", "manager", "staff"]), async 
   const cached = getCached(cacheKey);
   if (cached) return res.json(cached);
 
-  let query = supabaseAdmin
-    .from("products")
-    .select("*, categories(id, name), brands(id, name, is_hidden), models(id, name, image_url), years(id, label)")
-    .eq("is_deleted", false)
-    .order("created_at", { ascending: false });
+  try {
+    const match = { is_deleted: { $ne: true } };
+    if (status) match.status = status;
+    if (category_id) match.category_id = category_id;
+    if (brand_id) match.brand_id = toObjectId(brand_id);
+    if (q) {
+      match.$or = [
+        { name: { $regex: q, $options: "i" } }
+      ];
+    }
 
-  if (status) query = query.eq("status", status);
-  if (category_id) query = query.eq("category_id", category_id);
-  if (brand_id) query = query.eq("brand_id", brand_id);
+    const data = await collections.products()
+      .aggregate([
+        { $match: match },
+        {
+          $lookup: {
+            from: "categories",
+            localField: "category_id",
+            foreignField: "_id",
+            as: "category_data"
+          }
+        },
+        {
+          $lookup: {
+            from: "brands",
+            localField: "brand_id",
+            foreignField: "_id",
+            as: "brand_data"
+          }
+        },
+        {
+          $lookup: {
+            from: "models",
+            localField: "model_id",
+            foreignField: "_id",
+            as: "model_data"
+          }
+        },
+        {
+          $lookup: {
+            from: "years",
+            localField: "year_id",
+            foreignField: "_id",
+            as: "year_data"
+          }
+        },
+        { $unwind: { path: "$category_data", preserveNullAndEmptyArrays: true } },
+        { $unwind: { path: "$brand_data", preserveNullAndEmptyArrays: true } },
+        { $unwind: { path: "$model_data", preserveNullAndEmptyArrays: true } },
+        { $unwind: { path: "$year_data", preserveNullAndEmptyArrays: true } },
+        { $match: { "brand_data.is_hidden": { $ne: true } } },
+        { $sort: { created_at: -1 } }
+      ])
+      .toArray();
 
-  if (q && q.trim()) {
-    const searchQ = q.trim();
-    query = query.or(
-      `name.ilike.%${searchQ}%,categories.name.ilike.%${searchQ}%,brands.name.ilike.%${searchQ}%,models.name.ilike.%${searchQ}%`
-    );
+    const filtered = data.map(p => ({
+      ...p,
+      categories: { id: p.category_data?._id, name: p.category_data?.name },
+      brands: { id: p.brand_data?._id, name: p.brand_data?.name, is_hidden: p.brand_data?.is_hidden },
+      models: { id: p.model_data?._id, name: p.model_data?.name, image_url: p.model_data?.image_url },
+      years: { id: p.year_data?._id, label: p.year_data?.label }
+    }));
+    
+    setCache(cacheKey, filtered, q ? 10000 : 15000);
+    res.json(filtered);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  const { data, error } = await query;
-  if (error) return res.status(500).json({ error: error.message });
-
-  const filtered = data.filter(p => !p.brands?.is_hidden);
-  setCache(cacheKey, filtered, q ? 10000 : 15000);
-  res.json(filtered);
 });
 
 productsRouter.get("/export", authMiddleware("admin"), async (_req, res) => {
-  const { data, error } = await supabaseAdmin
-    .from("products")
-    .select("name, price, cost_price, quantity, description, image_url, status, categories(name), brands(name), models(name), years(label)")
-    .eq("is_deleted", false)
-    .order("created_at", { ascending: false });
-  if (error) return res.status(500).json({ error: error.message });
-  const header = [
-    "name",
-    "category",
-    "brand",
-    "model",
-    "year",
-    "price",
-    "cost_price",
-    "quantity",
-    "description",
-    "image_url",
-    "status"
-  ];
-  const lines = [header.join(",")];
-  (data || []).forEach((p) => {
-    const row = [
-      p.name,
-      p.categories?.name || "",
-      p.brands?.name || "",
-      p.models?.name || "",
-      p.years?.label || "",
-      p.price,
-      p.cost_price || "",
-      p.quantity,
-      (p.description || "").replace(/\n/g, " "),
-      p.image_url || "",
-      p.status
+  try {
+    const data = await collections.products()
+      .aggregate([
+        { $match: { is_deleted: { $ne: true } } },
+        {
+          $lookup: {
+            from: "categories",
+            localField: "category_id",
+            foreignField: "_id",
+            as: "category_data"
+          }
+        },
+        {
+          $lookup: {
+            from: "brands",
+            localField: "brand_id",
+            foreignField: "_id",
+            as: "brand_data"
+          }
+        },
+        {
+          $lookup: {
+            from: "models",
+            localField: "model_id",
+            foreignField: "_id",
+            as: "model_data"
+          }
+        },
+        {
+          $lookup: {
+            from: "years",
+            localField: "year_id",
+            foreignField: "_id",
+            as: "year_data"
+          }
+        },
+        { $sort: { created_at: -1 } }
+      ])
+      .toArray();
+
+    const header = [
+      "name",
+      "category",
+      "brand",
+      "model",
+      "year",
+      "price",
+      "cost_price",
+      "quantity",
+      "description",
+      "image_url",
+      "status"
     ];
-    lines.push(row.join(","));
-  });
-  res.setHeader("Content-Type", "text/csv");
-  res.send(lines.join("\n"));
+    const lines = [header.join(",")];
+    data.forEach((p) => {
+      const row = [
+        p.name,
+        p.category_data?.name || "",
+        p.brand_data?.name || "",
+        p.model_data?.name || "",
+        p.year_data?.label || "",
+        p.price,
+        p.cost_price || "",
+        p.quantity,
+        (p.description || "").replace(/\n/g, " "),
+        p.image_url || "",
+        p.status
+      ];
+      lines.push(row.join(","));
+    });
+    res.setHeader("Content-Type", "text/csv");
+    res.send(lines.join("\n"));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 productsRouter.post("/import", authMiddleware("admin"), async (req, res) => {
@@ -336,45 +408,45 @@ productsRouter.post("/import", authMiddleware("admin"), async (req, res) => {
         : null;
       const brand = row.brand ? await getOrCreateByName("brands", row.brand) : null;
       let model = null;
-      if (row.model && brand?.id) {
-        const { data: existing } = await supabaseAdmin
-          .from("models")
-          .select("*")
-          .eq("name", row.model)
-          .eq("brand_id", brand.id)
-          .maybeSingle();
-        model =
-          existing ||
-          (await supabaseAdmin
-            .from("models")
-            .insert({ name: row.model, brand_id: brand.id })
-            .select("*")
-            .single()).data;
+      if (row.model && brand?._id) {
+        model = await collections.models().findOne({ name: row.model, brand_id: brand._id });
+        if (!model) {
+          const result = await collections.models().insertOne({
+            name: row.model,
+            brand_id: brand._id,
+            years: [],
+            gallery: [],
+            created_at: new Date(),
+            updated_at: new Date()
+          });
+          model = { _id: result.insertedId };
+        }
       }
       const year = row.year
-        ? await supabaseAdmin.from("years").select("*").eq("label", row.year).maybeSingle()
+        ? await collections.years().findOne({ label: row.year })
         : null;
-      const yearData = year?.data || null;
+      
       const payload = {
         name: row.name,
-        category_id: category?.id || null,
-        brand_id: brand?.id || null,
-        model_id: model?.id || null,
-year_id: yearData?.id || null,
+        category_id: category?._id?.toString() || null,
+        brand_id: brand?._id?.toString() || null,
+        model_id: model?._id?.toString() || null,
+        year_id: year?._id?.toString() || null,
         price: Number(row.price || 0),
         cost_price: row.cost_price ? Number(row.cost_price) : null,
         quantity: Number(row.quantity || 0),
         description: row.description || null,
         image_url: row.image_url || null,
-        status: row.status || "active"
+        status: row.status || "active",
+        gallery: [],
+        is_deleted: false,
+        created_at: new Date(),
+        updated_at: new Date()
       };
-      const { data, error } = await supabaseAdmin
-        .from("products")
-        .insert(payload)
-        .select("*")
-        .single();
-      if (error) throw error;
-      created.push(data);
+      
+      const result = await collections.products().insertOne(payload);
+      const inserted = await collections.products().findOne({ _id: result.insertedId });
+      created.push(inserted);
     }
 
     res.status(201).json({ count: created.length });
@@ -384,43 +456,103 @@ year_id: yearData?.id || null,
 });
 
 productsRouter.get("/:id", async (req, res) => {
-  const { data, error } = await supabaseAdmin
-    .from("products")
-    .select(
-      "*, categories(name), brands(name), models(name, image_url, gallery), years(id, label), gallery"
-    )
-    .eq("id", req.params.id)
-    .eq("is_deleted", false)
-    .single();
-  if (error) return res.status(404).json({ error: "Product not found" });
-  res.json(data);
+  try {
+    const product = await collections.products()
+      .aggregate([
+        { $match: { _id: toObjectId(req.params.id), is_deleted: { $ne: true } } },
+        {
+          $lookup: {
+            from: "categories",
+            localField: "category_id",
+            foreignField: "_id",
+            as: "category_data"
+          }
+        },
+        {
+          $lookup: {
+            from: "brands",
+            localField: "brand_id",
+            foreignField: "_id",
+            as: "brand_data"
+          }
+        },
+        {
+          $lookup: {
+            from: "models",
+            localField: "model_id",
+            foreignField: "_id",
+            as: "model_data"
+          }
+        },
+        {
+          $lookup: {
+            from: "years",
+            localField: "year_id",
+            foreignField: "_id",
+            as: "year_data"
+          }
+        },
+        { $unwind: { path: "$category_data", preserveNullAndEmptyArrays: true } },
+        { $unwind: { path: "$brand_data", preserveNullAndEmptyArrays: true } },
+        { $unwind: { path: "$model_data", preserveNullAndEmptyArrays: true } },
+        { $unwind: { path: "$year_data", preserveNullAndEmptyArrays: true } }
+      ])
+      .toArray();
+    
+    if (!product || product.length === 0) {
+      return res.status(404).json({ error: "Product not found" });
+    }
+    
+    const p = product[0];
+    res.json({
+      ...p,
+      categories: { name: p.category_data?.name },
+      brands: { name: p.brand_data?.name },
+      models: { name: p.model_data?.name, image_url: p.model_data?.image_url, gallery: p.model_data?.gallery },
+      years: { id: p.year_data?._id, label: p.year_data?.label }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 productsRouter.post("/", authMiddleware(["admin", "manager"]), maybeUpload, async (req, res) => {
-try {
+  try {
     const raw = req.body;
     const payload = productSchema.parse(raw);
     const files = req.files || {};
     const productImage = Array.isArray(files.image) ? files.image[0] : null;
+    
     if (productImage) {
-      payload.image_url = await uploadProductImage(productImage, "products");
+      const result = await uploadImage(productImage.buffer, "products");
+      payload.image_url = result.url;
     }
-    const { data, error } = await supabaseAdmin
-      .from("products")
-      .insert(payload)
-      .select("*")
-      .single();
-    if (error) return res.status(400).json({ error: error.message });
+    
+    const insertData = {
+      ...payload,
+      category_id: payload.category_id,
+      brand_id: payload.brand_id,
+      model_id: payload.model_id,
+      year_id: payload.year_id,
+      is_deleted: false,
+      created_at: new Date(),
+      updated_at: new Date()
+    };
+    
+    const result = await collections.products().insertOne(insertData);
+    const inserted = await collections.products().findOne({ _id: result.insertedId });
+    
     logAudit({
       actor_id: req.user.id,
       action: "create",
       entity: "product",
-      entity_id: data.id,
-      metadata: { name: data.name }
+      entity_id: result.insertedId.toString(),
+      metadata: { name: inserted.name }
     });
+    
     clearCache("products");
     clearCache("categories");
-    res.status(201).json(data);
+    res.status(201).json(inserted);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -431,97 +563,132 @@ productsRouter.put("/:id", authMiddleware(["admin", "manager"]), maybeUpload, as
     const payload = productSchema.partial().parse(req.body);
     const files = req.files || {};
     const productImage = Array.isArray(files.image) ? files.image[0] : null;
+    
     if (productImage) {
-      payload.image_url = await uploadProductImage(productImage, "products");
+      const result = await uploadImage(productImage.buffer, "products");
+      payload.image_url = result.url;
     }
-    const { data, error } = await supabaseAdmin
-      .from("products")
-      .update(payload)
-      .eq("id", req.params.id)
-      .select("*")
-      .single();
-    if (error) return res.status(400).json({ error: error.message });
+    
+    const updateData = {
+      ...payload,
+      updated_at: new Date()
+    };
+    
+    const result = await collections.products().findOneAndUpdate(
+      { _id: toObjectId(req.params.id) },
+      { $set: updateData },
+      { returnDocument: "after" }
+    );
+    
+    if (!result) return res.status(404).json({ error: "Product not found" });
+    
     logAudit({
       actor_id: req.user.id,
       action: "update",
       entity: "product",
-      entity_id: data.id,
-      metadata: { name: data.name }
+      entity_id: req.params.id,
+      metadata: { name: result.name }
     });
+    
     clearCache("products");
     clearCache("categories");
-    res.json(data);
+    res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
 productsRouter.delete("/:id", authMiddleware(["admin", "manager"]), async (req, res) => {
-  const { error } = await supabaseAdmin
-    .from("products")
-    .update({ is_deleted: true })
-    .eq("id", req.params.id);
-  if (error) return res.status(400).json({ error: error.message });
-  logAudit({
-    actor_id: req.user.id,
-    action: "delete",
-    entity: "product",
-    entity_id: req.params.id
-  });
-  clearCache("products");
-  clearCache("categories");
-  res.status(204).send();
+  try {
+    const result = await collections.products().findOneAndUpdate(
+      { _id: toObjectId(req.params.id) },
+      { $set: { is_deleted: true, updated_at: new Date() } }
+    );
+    
+    if (!result) return res.status(404).json({ error: "Product not found" });
+    
+    logAudit({
+      actor_id: req.user.id,
+      action: "delete",
+      entity: "product",
+      entity_id: req.params.id
+    });
+    
+    clearCache("products");
+    clearCache("categories");
+    res.status(204).send();
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 productsRouter.post("/generate-image/:id", authMiddleware(["admin", "manager"]), async (req, res) => {
   try {
-    const { data: product } = await supabaseAdmin
-      .from("products")
-      .select("*, categories(name), brands(name), models(name), years(label)")
-      .eq("id", req.params.id)
-      .single();
-
-    if (!product) {
+    const product = await collections.products()
+      .aggregate([
+        { $match: { _id: toObjectId(req.params.id) } },
+        {
+          $lookup: {
+            from: "categories",
+            localField: "category_id",
+            foreignField: "_id",
+            as: "category_data"
+          }
+        },
+        {
+          $lookup: {
+            from: "brands",
+            localField: "brand_id",
+            foreignField: "_id",
+            as: "brand_data"
+          }
+        },
+        {
+          $lookup: {
+            from: "models",
+            localField: "model_id",
+            foreignField: "_id",
+            as: "model_data"
+          }
+        },
+        {
+          $lookup: {
+            from: "years",
+            localField: "year_id",
+            foreignField: "_id",
+            as: "year_data"
+          }
+        }
+      ])
+      .toArray();
+    
+    if (!product || product.length === 0) {
       return res.status(404).json({ error: "Product not found" });
     }
-
-    const prompt = `${product.brands?.name || ""} ${product.models?.name || ""} ${product.years?.label || ""} ${product.name} ${product.categories?.name || ""}`.trim();
+    
+    const p = product[0];
+    const prompt = `${p.brand_data?.name || ""} ${p.model_data?.name || ""} ${p.year_data?.label || ""} ${p.name} ${p.category_data?.name || ""}`.trim();
 
     const result = await generateProductImage(prompt);
 
     let imageUrl;
     if (result.imageData) {
       const buffer = Buffer.from(result.imageData, "base64");
-      const processed = await sharp(buffer)
-        .resize({ width: 1200, height: 800, fit: "cover" })
-        .jpeg({ quality: 85 })
-        .toBuffer();
-
-      const filename = `product-images/${crypto.randomUUID()}.jpg`;
-      const { error: uploadError } = await supabaseAdmin.storage
-        .from(process.env.SUPABASE_STORAGE_BUCKET || "product-images")
-        .upload(filename, processed, { contentType: "image/jpeg", upsert: true });
-
-      if (uploadError) throw new Error("Failed to upload image");
-
-      const { data: urlData } = supabaseAdmin.storage
-        .from(process.env.SUPABASE_STORAGE_BUCKET || "product-images")
-        .getPublicUrl(filename);
-      imageUrl = urlData.publicUrl;
+      const uploadResult = await uploadImage(buffer, "product-images");
+      imageUrl = uploadResult.url;
     } else if (result.externalUrl) {
       const downloadRes = await fetch(result.externalUrl, { headers: { "User-Agent": "SpeedwayApp/1.0" } });
       if (!downloadRes.ok) throw new Error("Failed to download external image");
       const buffer = Buffer.from(await downloadRes.arrayBuffer());
-      const processed = await sharp(buffer).resize({ width: 1200, height: 800, fit: "cover" }).jpeg({ quality: 85 }).toBuffer();
-      
-      const filename = `product-images/${crypto.randomUUID()}.jpg`;
-      await supabaseAdmin.storage.from(process.env.SUPABASE_STORAGE_BUCKET || "product-images").upload(filename, processed, { contentType: "image/jpeg", upsert: true });
-      const { data: urlData } = supabaseAdmin.storage.from(process.env.SUPABASE_STORAGE_BUCKET || "product-images").getPublicUrl(filename);
-      imageUrl = urlData.publicUrl;
+      const uploadResult = await uploadImage(buffer, "product-images");
+      imageUrl = uploadResult.url;
     }
 
     if (imageUrl) {
-      await supabaseAdmin.from("products").update({ image_url: imageUrl }).eq("id", req.params.id);
+      await collections.products().updateOne(
+        { _id: toObjectId(req.params.id) },
+        { $set: { image_url: imageUrl, updated_at: new Date() } }
+      );
       clearCache("products");
       res.json({ success: true, imageUrl });
     } else {
@@ -534,23 +701,56 @@ productsRouter.post("/generate-image/:id", authMiddleware(["admin", "manager"]),
 
 productsRouter.post("/generate-keywords/:id", authMiddleware(["admin", "manager"]), async (req, res) => {
   try {
-    const { data: product } = await supabaseAdmin
-      .from("products")
-      .select("*, categories(name), brands(name), models(name), years(label)")
-      .eq("id", req.params.id)
-      .single();
-
-    if (!product) {
+    const product = await collections.products()
+      .aggregate([
+        { $match: { _id: toObjectId(req.params.id) } },
+        {
+          $lookup: {
+            from: "categories",
+            localField: "category_id",
+            foreignField: "_id",
+            as: "category_data"
+          }
+        },
+        {
+          $lookup: {
+            from: "brands",
+            localField: "brand_id",
+            foreignField: "_id",
+            as: "brand_data"
+          }
+        },
+        {
+          $lookup: {
+            from: "models",
+            localField: "model_id",
+            foreignField: "_id",
+            as: "model_data"
+          }
+        },
+        {
+          $lookup: {
+            from: "years",
+            localField: "year_id",
+            foreignField: "_id",
+            as: "year_data"
+          }
+        }
+      ])
+      .toArray();
+    
+    if (!product || product.length === 0) {
       return res.status(404).json({ error: "Product not found" });
     }
-
+    
+    const p = product[0];
     const keywords = await generateSearchKeywords({
-      name: product.name,
-      description: product.description,
-      brand: product.brands?.name,
-      model: product.models?.name,
-      year: product.years?.label,
-      category: product.categories?.name
+      name: p.name,
+      description: p.description,
+      brand: p.brand_data?.name,
+      model: p.model_data?.name,
+      year: p.year_data?.label,
+      category: p.category_data?.name
     });
 
     res.json({ keywords });
@@ -564,8 +764,8 @@ productsRouter.post("/upload", authMiddleware(["admin", "manager"]), upload.sing
     return res.status(400).json({ error: "No file uploaded" });
   }
   try {
-    const imageUrl = await uploadProductImage(req.file, "products");
-    res.json({ url: imageUrl });
+    const result = await uploadImage(req.file.buffer, "products");
+    res.json({ url: result.url });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -587,10 +787,14 @@ productsRouter.post("/upload-gallery", authMiddleware(["admin", "manager"]), upl
     return res.status(400).json({ error: "Image must be under 5MB" });
   }
   try {
-    const result = await uploadGalleryFile(req.file, "products/gallery");
-    res.json(result);
+    let result;
+    if (isVideo) {
+      result = await uploadGalleryImage(req.file.buffer, "products/videos");
+    } else {
+      result = await uploadGalleryImage(req.file.buffer, "products/gallery");
+    }
+    res.json({ url: result.url, type: isVideo ? "video" : "image" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
-

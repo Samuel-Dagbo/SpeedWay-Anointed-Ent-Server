@@ -12,10 +12,15 @@
     "seed:full": "node src/scripts/seedFullProducts.js",
     "seed:update": "node src/scripts/seedUpdateProducts.js",
     "update:images": "node src/scripts/updateProductImages.js",
-    "update:images:batch": "node src/scripts/batchUpdateImages.js"
+    "update:images:batch": "node src/scripts/batchUpdateImages.js",
+    "setup:indexes": "node src/scripts/setupIndexes.js",
+    "migrate": "node src/scripts/migrateFromSupabase.js",
+    "import:csv": "node src/scripts/importCSV.js"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.99.1",
+    "mongodb": "^6.5.0",
+    "cloudinary": "^2.2.0",
+    "csv-parse": "^5.5.6",
     "bcryptjs": "^2.4.3",
     "compression": "^1.7.4",
     "cors": "^2.8.5",

@@ -1,7 +1,7 @@
-﻿import express from "express";
+import express from "express";
 import { z } from "zod";
-import { supabaseAdmin } from "../services/supabaseClient.js";
-import { authMiddleware } from "../middleware/auth.js";
+import { collections, toObjectId } from "../services/mongodb.js";
+import { authMiddleware } from "./auth.js";
 
 export const reviewsRouter = express.Router();
 
@@ -13,40 +13,92 @@ const reviewSchema = z.object({
 });
 
 reviewsRouter.get("/", async (_req, res) => {
-  const { data, error } = await supabaseAdmin
-    .from("reviews")
-    .select("id, rating, title, body, created_at, product_id, users(full_name)")
-    .order("created_at", { ascending: false });
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  try {
+    const reviews = await collections.reviews()
+      .aggregate([
+        {
+          $lookup: {
+            from: "users",
+            localField: "user_id",
+            foreignField: "_id",
+            as: "user_data"
+          }
+        },
+        { $unwind: { path: "$user_data", preserveNullAndEmptyArrays: true } },
+        {
+          $project: {
+            _id: 1,
+            rating: 1,
+            title: 1,
+            body: 1,
+            created_at: 1,
+            product_id: 1,
+            "user_data.full_name": 1,
+            users: { full_name: "$user_data.full_name" }
+          }
+        },
+        { $sort: { created_at: -1 } }
+      ])
+      .toArray();
+    res.json(reviews);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 reviewsRouter.get("/product/:id", async (req, res) => {
-  const { data, error } = await supabaseAdmin
-    .from("reviews")
-    .select("id, rating, title, body, created_at, users(full_name)")
-    .eq("product_id", req.params.id)
-    .order("created_at", { ascending: false });
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  try {
+    const reviews = await collections.reviews()
+      .aggregate([
+        { $match: { product_id: req.params.id } },
+        {
+          $lookup: {
+            from: "user",
+            localField: "user_id",
+            foreignField: "_id",
+            as: "user_data"
+          }
+        },
+        { $unwind: { path: "$user_data", preserveNullAndEmptyArrays: true } },
+        {
+          $project: {
+            _id: 1,
+            rating: 1,
+            title: 1,
+            body: 1,
+            created_at: 1,
+            users: { full_name: "$user_data.full_name" }
+          }
+        },
+        { $sort: { created_at: -1 } }
+      ])
+      .toArray();
+    res.json(reviews);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 reviewsRouter.post("/", authMiddleware(), async (req, res) => {
   try {
     const payload = reviewSchema.parse(req.body);
-    const { data, error } = await supabaseAdmin
-      .from("reviews")
-      .insert({
-        user_id: req.user.id,
-        product_id: payload.product_id,
-        rating: payload.rating,
-        title: payload.title || null,
-        body: payload.body
-      })
-      .select("id, rating, title, body, created_at, product_id, users(full_name)")
-      .single();
-    if (error) return res.status(400).json({ error: error.message });
-    res.status(201).json(data);
+    const result = await collections.reviews().insertOne({
+      user_id: req.user.id,
+      product_id: payload.product_id,
+      rating: payload.rating,
+      title: payload.title || null,
+      body: payload.body,
+      created_at: new Date()
+    });
+    const inserted = await collections.reviews().findOne({ _id: result.insertedId });
+    res.status(201).json({
+      id: inserted._id.toString(),
+      rating: inserted.rating,
+      title: inserted.title,
+      body: inserted.body,
+      created_at: inserted.created_at,
+      product_id: inserted.product_id
+    });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
