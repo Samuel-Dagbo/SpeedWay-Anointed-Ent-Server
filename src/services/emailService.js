@@ -15,6 +15,41 @@ const OAUTH_REDIRECT_URI = "https://developers.google.com/oauthplayground";
 const canSendEmail = () =>
   Boolean(GMAIL_USER && GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && GOOGLE_REFRESH_TOKEN);
 
+let cachedToken = null;
+let tokenExpiry = 0;
+
+const getOAuth2Client = () => {
+  const client = new google.auth.OAuth2(
+    GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET,
+    OAUTH_REDIRECT_URI
+  );
+  client.setCredentials({ 
+    refresh_token: GOOGLE_REFRESH_TOKEN,
+    access_type: 'offline'
+  });
+  return client;
+};
+
+const getAccessToken = async (forceRefresh = false) => {
+  if (!forceRefresh && cachedToken && Date.now() < tokenExpiry - 60000) {
+    return cachedToken;
+  }
+  
+  try {
+    const oauth2Client = getOAuth2Client();
+    const { credentials } = await oauth2Client.refreshAccessToken();
+    cachedToken = credentials.access_token;
+    tokenExpiry = credentials.expiry_date || (Date.now() + 3600000);
+    return cachedToken;
+  } catch (err) {
+    console.error("[email] Failed to refresh token:", err?.message);
+    cachedToken = null;
+    tokenExpiry = 0;
+    throw err;
+  }
+};
+
 const getCopyEmails = (primaryTo) => {
   const raw = String(NOTIFICATION_COPY_EMAILS || "");
   const list = raw
@@ -24,17 +59,6 @@ const getCopyEmails = (primaryTo) => {
   return list.filter(
     (email) => email.toLowerCase() !== String(primaryTo || "").toLowerCase()
   );
-};
-
-const getAccessToken = async () => {
-  const oauth2Client = new google.auth.OAuth2(
-    GOOGLE_CLIENT_ID,
-    GOOGLE_CLIENT_SECRET,
-    OAUTH_REDIRECT_URI
-  );
-  oauth2Client.setCredentials({ refresh_token: GOOGLE_REFRESH_TOKEN });
-  const tokenResponse = await oauth2Client.getAccessToken();
-  return tokenResponse?.token || "";
 };
 
 const BRAND = {
@@ -74,22 +98,23 @@ function emailLayout({ title, intro, ctaLabel, ctaLink, body, footer }) {
   `;
 }
 
-async function sendEmail({ to, subject, html }) {
+async function sendEmail({ to, subject, html }, retryCount = 0) {
   try {
-    if (!canSendEmail() || !to) return;
+    if (!canSendEmail() || !to) {
+      console.warn("[email] Cannot send: missing configuration or recipient");
+      return false;
+    }
 
-    const oauth2Client = new google.auth.OAuth2(
-      GOOGLE_CLIENT_ID,
-      GOOGLE_CLIENT_SECRET,
-      OAUTH_REDIRECT_URI
-    );
-    oauth2Client.setCredentials({ refresh_token: GOOGLE_REFRESH_TOKEN });
     const accessToken = await getAccessToken();
-    if (!accessToken) return;
+    if (!accessToken) {
+      console.error("[email] No access token available");
+      return false;
+    }
 
-    oauth2Client.setCredentials({
-      refresh_token: GOOGLE_REFRESH_TOKEN,
-      access_token: accessToken
+    const oauth2Client = getOAuth2Client();
+    oauth2Client.setCredentials({ 
+      access_token: accessToken,
+      refresh_token: GOOGLE_REFRESH_TOKEN 
     });
 
     const gmail = google.gmail({ version: "v1", auth: oauth2Client });
@@ -115,8 +140,24 @@ async function sendEmail({ to, subject, html }) {
       userId: "me",
       requestBody: { raw }
     });
+    
+    console.log("[email] Sent successfully to:", to);
+    return true;
   } catch (err) {
-    console.error("[email] Failed to send email", err);
+    console.error("[email] Failed to send email:", err?.message, err?.code);
+    
+    if (err?.message?.includes("invalid_grant") || err?.message?.includes("Token has been expired")) {
+      console.error("[email] OAuth token expired, clearing cache");
+      cachedToken = null;
+      tokenExpiry = 0;
+      
+      if (retryCount === 0) {
+        console.log("[email] Retrying with fresh token...");
+        return sendEmail({ to, subject, html }, retryCount + 1);
+      }
+    }
+    
+    return false;
   }
 }
 
@@ -207,7 +248,7 @@ export async function sendEmailConfirmation(to, confirmLink) {
 }
 
 export async function sendTestEmail(to) {
-  await sendEmail({
+  const success = await sendEmail({
     to,
     subject: "Speedway Anointed Ent test email",
     html: emailLayout({
@@ -216,6 +257,10 @@ export async function sendTestEmail(to) {
       footer: "If you received this, your email configuration is correct."
     })
   });
+  
+  if (!success) {
+    throw new Error("Failed to send test email. Check server logs for details.");
+  }
 }
 
 export { canSendEmail };
