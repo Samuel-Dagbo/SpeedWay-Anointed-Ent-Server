@@ -147,7 +147,6 @@ async function startServer() {
           await fetch(selfPingUrl, { method: "GET", signal: controller.signal });
           clearTimeout(timeoutId);
           console.log("[self-ping] ok", new Date().toISOString());
-          await warmCache();
         } catch (err) {
           console.warn("[self-ping] failed:", err?.message || err);
         }
