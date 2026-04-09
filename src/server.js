@@ -65,6 +65,11 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
+app.post("/admin/cache/clear", (_req, res) => {
+  cache.clear();
+  res.json({ message: "Cache cleared" });
+});
+
 app.use("/auth", authRouter);
 app.use("/products", productsRouter);
 app.use("/orders", ordersRouter);
