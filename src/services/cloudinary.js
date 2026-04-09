@@ -53,6 +53,7 @@ export async function uploadGalleryImage(buffer, folder = "products/gallery") {
 }
 
 export async function uploadVideo(buffer, folder = "products/videos") {
+  // Video upload function - chunk_size enables large file uploads
   return new Promise((resolve, reject) => {
     const publicId = `${folder}/${crypto.randomUUID()}`;
     
