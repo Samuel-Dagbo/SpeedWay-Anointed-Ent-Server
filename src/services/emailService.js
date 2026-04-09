@@ -8,7 +8,7 @@ const {
 } = process.env;
 
 const ADMIN_EMAIL = OWNER_EMAIL || GMAIL_USER;
-const FROM_EMAIL = GMAIL_USER || "noreply@speedway.example";
+const FROM_EMAIL = "onboarding@resend.dev";
 
 const canSendEmail = () => Boolean(RESEND_API);
 
