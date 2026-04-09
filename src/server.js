@@ -102,10 +102,16 @@ async function warmCache() {
     ]);
     
     const visibleModels = (mdlz || []).filter(m => !m.is_hidden);
-    setCache("categories:all", cats, 3600000);
-    setCache("brands:all", brds, 3600000);
-    setCache("models:all", visibleModels, 3600000);
-    setCache("years:all", yrs, 3600000);
+    
+    const formattedCats = cats.map(c => ({ ...c, id: c._id?.toString(), _id: undefined }));
+    const formattedBrds = brds.map(b => ({ ...b, id: b._id?.toString(), _id: undefined }));
+    const formattedModels = visibleModels.map(m => ({ ...m, id: m._id?.toString(), _id: undefined }));
+    const formattedYears = yrs.map(y => ({ ...y, id: y._id?.toString(), _id: undefined }));
+    
+    setCache("categories:all", formattedCats, 3600000);
+    setCache("brands:all", formattedBrds, 3600000);
+    setCache("models:all", formattedModels, 3600000);
+    setCache("years:all", formattedYears, 3600000);
     console.log("[cache] warmed", new Date().toISOString());
   } catch (err) {
     console.warn("[cache] warm failed:", err?.message);
