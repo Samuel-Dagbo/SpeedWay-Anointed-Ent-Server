@@ -136,57 +136,15 @@ productsRouter.get("/", async (req, res) => {
     
     const [data, countResult] = await Promise.all([
       collections.products()
-        .aggregate([
-          { $match: match },
-          {
-            $lookup: {
-              from: "categories",
-              localField: "category_id",
-              foreignField: "_id",
-              as: "category_data"
-            }
-          },
-          {
-            $lookup: {
-              from: "brands",
-              localField: "brand_id",
-              foreignField: "_id",
-              as: "brand_data"
-            }
-          },
-          {
-            $lookup: {
-              from: "models",
-              localField: "model_id",
-              foreignField: "_id",
-              as: "model_data"
-            }
-          },
-          {
-            $lookup: {
-              from: "years",
-              localField: "year_id",
-              foreignField: "_id",
-              as: "year_data"
-            }
-          },
-          { $unwind: { path: "$category_data", preserveNullAndEmptyArrays: true } },
-          { $unwind: { path: "$brand_data", preserveNullAndEmptyArrays: true } },
-          { $unwind: { path: "$model_data", preserveNullAndEmptyArrays: true } },
-          { $unwind: { path: "$year_data", preserveNullAndEmptyArrays: true } },
-          { $match: { "brand_data.is_hidden": { $ne: true } } },
-          { $sort: { created_at: -1 } },
-          { $skip: offset },
-          { $limit: limitNum }
-        ], { allowDiskUse: true })
+        .find(match)
+        .sort({ created_at: -1 })
+        .skip(offset)
+        .limit(limitNum)
         .toArray(),
       collections.products().countDocuments(match)
     ]);
     
-    const filtered = data.map(p => transformProductForFrontend({
-      ...p,
-      categories: { name: p.category_data?.name },
-      brands: { name: p.brand_data?.name, is_hidden: p.brand_data?.is_hidden },
+    const filtered = data.map(p => transformProductForFrontend(p));
       models: { name: p.model_data?.name, image_url: p.model_data?.image_url },
       years: { id: p.year_data?._id?.toString(), label: p.year_data?.label }
     }));
@@ -225,26 +183,15 @@ productsRouter.get("/by-category", async (req, res) => {
       .project({ _id: 1, name: 1, image_url: 1 })
       .toArray();
     
-    const counts = await collections.products()
-      .aggregate([
-        { $match: { is_deleted: { $ne: true } } },
-        {
-          $lookup: {
-            from: "brands",
-            localField: "brand_id",
-            foreignField: "_id",
-            as: "brand_data"
-          }
-        },
-        { $unwind: { path: "$brand_data", preserveNullAndEmptyArrays: true } },
-        { $match: { "brand_data.is_hidden": { $ne: true } } },
-        { $group: { _id: "$category_id", count: { $sum: 1 } } }
-      ], { allowDiskUse: true })
+    const allProducts = await collections.products()
+      .find({ is_deleted: { $ne: true } })
       .toArray();
     
     const countMap = {};
-    counts.forEach(c => {
-      countMap[c._id] = c.count;
+    allProducts.forEach(p => {
+      if (p.category_id) {
+        countMap[p.category_id] = (countMap[p.category_id] || 0) + 1;
+      }
     });
     
     const result = categories.map(cat => ({
@@ -282,56 +229,11 @@ productsRouter.get("/all", authMiddleware(["admin", "manager", "staff"]), async 
     }
 
     const data = await collections.products()
-      .aggregate([
-        { $match: match },
-        {
-          $lookup: {
-            from: "categories",
-            localField: "category_id",
-            foreignField: "_id",
-            as: "category_data"
-          }
-        },
-        {
-          $lookup: {
-            from: "brands",
-            localField: "brand_id",
-            foreignField: "_id",
-            as: "brand_data"
-          }
-        },
-        {
-          $lookup: {
-            from: "models",
-            localField: "model_id",
-            foreignField: "_id",
-            as: "model_data"
-          }
-        },
-        {
-          $lookup: {
-            from: "years",
-            localField: "year_id",
-            foreignField: "_id",
-            as: "year_data"
-          }
-        },
-        { $unwind: { path: "$category_data", preserveNullAndEmptyArrays: true } },
-        { $unwind: { path: "$brand_data", preserveNullAndEmptyArrays: true } },
-        { $unwind: { path: "$model_data", preserveNullAndEmptyArrays: true } },
-        { $unwind: { path: "$year_data", preserveNullAndEmptyArrays: true } },
-        { $match: { "brand_data.is_hidden": { $ne: true } } },
-        { $sort: { created_at: -1 } }
-      ], { allowDiskUse: true })
+      .find(match)
+      .sort({ created_at: -1 })
       .toArray();
 
-    const filtered = data.map(p => transformProductForFrontend({
-      ...p,
-      categories: { id: p.category_data?._id?.toString(), name: p.category_data?.name },
-      brands: { id: p.brand_data?._id?.toString(), name: p.brand_data?.name, is_hidden: p.brand_data?.is_hidden },
-      models: { id: p.model_data?._id?.toString(), name: p.model_data?.name, image_url: p.model_data?.image_url },
-      years: { id: p.year_data?._id?.toString(), label: p.year_data?.label }
-    }));
+    const filtered = data.map(p => transformProductForFrontend(p));
     
     setCache(cacheKey, filtered, q ? 10000 : 15000);
     res.json(filtered);
