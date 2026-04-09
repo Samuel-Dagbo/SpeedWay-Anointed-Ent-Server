@@ -54,14 +54,15 @@ export async function uploadGalleryImage(buffer, folder = "products/gallery") {
 
 export async function uploadVideo(buffer, folder = "products/videos") {
   return new Promise((resolve, reject) => {
-    const filename = `${folder}/${crypto.randomUUID()}.mp4`;
+    const publicId = `${folder}/${crypto.randomUUID()}`;
     
     cloudinary.uploader
       .upload_stream(
         {
           folder,
           resource_type: "video",
-          public_id: filename.split("/").pop().replace(".mp4", ""),
+          public_id: publicId.split("/").pop(),
+          chunk_size: 6000000,
         },
         (error, result) => {
           if (error) {
