@@ -178,7 +178,7 @@ productsRouter.get("/", async (req, res) => {
           { $sort: { created_at: -1 } },
           { $skip: offset },
           { $limit: limitNum }
-        ])
+        ], { allowDiskUse: true })
         .toArray(),
       collections.products().countDocuments(match)
     ]);
@@ -239,7 +239,7 @@ productsRouter.get("/by-category", async (req, res) => {
         { $unwind: { path: "$brand_data", preserveNullAndEmptyArrays: true } },
         { $match: { "brand_data.is_hidden": { $ne: true } } },
         { $group: { _id: "$category_id", count: { $sum: 1 } } }
-      ])
+      ], { allowDiskUse: true })
       .toArray();
     
     const countMap = {};
@@ -322,7 +322,7 @@ productsRouter.get("/all", authMiddleware(["admin", "manager", "staff"]), async 
         { $unwind: { path: "$year_data", preserveNullAndEmptyArrays: true } },
         { $match: { "brand_data.is_hidden": { $ne: true } } },
         { $sort: { created_at: -1 } }
-      ])
+      ], { allowDiskUse: true })
       .toArray();
 
     const filtered = data.map(p => transformProductForFrontend({
@@ -378,7 +378,7 @@ productsRouter.get("/export", authMiddleware("admin"), async (_req, res) => {
           }
         },
         { $sort: { created_at: -1 } }
-      ])
+      ], { allowDiskUse: true })
       .toArray();
 
     const header = [
@@ -520,7 +520,7 @@ productsRouter.get("/:id", async (req, res) => {
         { $unwind: { path: "$brand_data", preserveNullAndEmptyArrays: true } },
         { $unwind: { path: "$model_data", preserveNullAndEmptyArrays: true } },
         { $unwind: { path: "$year_data", preserveNullAndEmptyArrays: true } }
-      ])
+      ], { allowDiskUse: true })
       .toArray();
     
     if (!product || product.length === 0) {
@@ -683,7 +683,7 @@ productsRouter.post("/generate-image/:id", authMiddleware(["admin", "manager"]),
             as: "year_data"
           }
         }
-      ])
+      ], { allowDiskUse: true })
       .toArray();
     
     if (!product || product.length === 0) {
@@ -760,7 +760,7 @@ productsRouter.post("/generate-keywords/:id", authMiddleware(["admin", "manager"
             as: "year_data"
           }
         }
-      ])
+      ], { allowDiskUse: true })
       .toArray();
     
     if (!product || product.length === 0) {
