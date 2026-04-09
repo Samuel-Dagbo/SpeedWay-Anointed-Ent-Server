@@ -9,6 +9,7 @@ if (!MONGODB_URI) {
 
 let client = null;
 let db = null;
+export { client };
 
 export async function connectToMongoDB() {
   if (db) return db;

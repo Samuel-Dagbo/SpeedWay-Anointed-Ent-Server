@@ -171,14 +171,15 @@ async function runDailyHealthCheck() {
   }
 
   try {
-    const mongodbStatus = await collections.users().stats();
+    const client = await import("./services/mongodb.js").then(m => m.client);
+    await client.db("admin").command({ ping: 1 });
     results.checks.push({
       name: "MongoDB",
       url: "Cluster0",
-      status: mongodbStatus ? "OK" : "ERROR",
-      success: Boolean(mongodbStatus)
+      status: "OK",
+      success: true
     });
-    results.summary[mongodbStatus ? "passed" : "failed"]++;
+    results.summary.passed++;
   } catch (err) {
     results.checks.push({
       name: "MongoDB",
