@@ -46,11 +46,11 @@ export function getCollection(name) {
 export function toObjectId(id) {
   if (!id) return null;
   if (id instanceof ObjectId) return id;
-  try {
+  if (typeof id !== "string") return id;
+  if (/^[0-9a-f]{24}$/i.test(id)) {
     return new ObjectId(id);
-  } catch {
-    return null;
   }
+  return id;
 }
 
 export const collections = {
