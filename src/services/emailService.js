@@ -264,4 +264,4 @@ export async function sendTestEmail(to) {
   }
 }
 
-export { canSendEmail, sendEmail };
+export { canSendEmail };
