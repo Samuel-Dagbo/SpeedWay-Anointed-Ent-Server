@@ -3,7 +3,7 @@ import { z } from "zod";
 import multer from "multer";
 import crypto from "crypto";
 import { collections, toObjectId } from "../services/mongodb.js";
-import { uploadImage, uploadGalleryImage } from "../services/cloudinary.js";
+import { uploadImage, uploadGalleryImage, uploadVideo } from "../services/cloudinary.js";
 import { authMiddleware } from "./auth.js";
 import { logAudit } from "../services/audit.js";
 import { getCached, setCache, clearCache } from "../server.js";
@@ -712,7 +712,7 @@ productsRouter.post("/upload-gallery", authMiddleware(["admin", "manager"]), upl
   try {
     let result;
     if (isVideo) {
-      result = await uploadGalleryImage(req.file.buffer, "products/videos");
+      result = await uploadVideo(req.file.buffer, "products/videos");
     } else {
       result = await uploadGalleryImage(req.file.buffer, "products/gallery");
     }
