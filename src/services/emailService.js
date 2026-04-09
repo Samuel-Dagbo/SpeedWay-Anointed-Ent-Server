@@ -99,7 +99,7 @@ function emailLayout({ title, intro, ctaLabel, ctaLink, body, footer }) {
   `;
 }
 
-async function sendEmail({ to, subject, html }, retryCount = 0) {
+export async function sendEmail({ to, subject, html }, retryCount = 0) {
   try {
     if (!canSendEmail() || !to) {
       console.warn("[email] Cannot send: missing configuration or recipient");
@@ -264,4 +264,4 @@ export async function sendTestEmail(to) {
   }
 }
 
-export { canSendEmail };
+export { canSendEmail, sendEmail };
