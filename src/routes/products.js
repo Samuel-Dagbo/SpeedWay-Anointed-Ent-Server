@@ -13,10 +13,10 @@ export const productsRouter = express.Router();
 
 const productSchema = z.object({
   name: z.string().min(1),
-  category_id: z.string().uuid(),
-  brand_id: z.string().uuid().nullable().optional(),
-  model_id: z.string().uuid().nullable().optional(),
-  year_id: z.string().uuid().nullable().optional(),
+  category_id: z.string(),
+  brand_id: z.string().nullable().optional(),
+  model_id: z.string().nullable().optional(),
+  year_id: z.string().nullable().optional(),
   price: z.preprocess((val) => Number(val), z.number()),
   cost_price: z.preprocess(
     (val) => (val === "" || val === undefined ? null : Number(val)),
@@ -24,7 +24,7 @@ const productSchema = z.object({
   ),
   quantity: z.preprocess((val) => Number(val), z.number().int()),
   description: z.string().optional().nullable(),
-  image_url: z.string().url().optional().nullable(),
+  image_url: z.string().optional().nullable(),
   gallery: z.preprocess(
     (val) => {
       if (typeof val === "string") {
@@ -380,9 +380,10 @@ productsRouter.post("/import", authMiddleware("admin"), async (req, res) => {
 
 productsRouter.get("/:id", async (req, res) => {
   try {
+    const productId = toObjectId(req.params.id);
     const product = await collections.products()
       .aggregate([
-        { $match: { _id: req.params.id, is_deleted: { $ne: true } } },
+        { $match: { _id: productId, is_deleted: { $ne: true } } },
         {
           $lookup: {
             from: "categories",
@@ -483,13 +484,14 @@ productsRouter.post("/", authMiddleware(["admin", "manager"]), maybeUpload, asyn
 
 productsRouter.put("/:id", authMiddleware(["admin", "manager"]), maybeUpload, async (req, res) => {
   try {
-    const payload = productSchema.partial().parse(req.body);
+    const raw = req.body;
+    const payload = productSchema.partial().parse(raw);
     const files = req.files || {};
     const productImage = Array.isArray(files.image) ? files.image[0] : null;
     
     if (productImage) {
-      const result = await uploadImage(productImage.buffer, "products");
-      payload.image_url = result.url;
+      const uploadResult = await uploadImage(productImage.buffer, "products");
+      payload.image_url = uploadResult.url;
     }
     
     const updateData = {
@@ -497,38 +499,45 @@ productsRouter.put("/:id", authMiddleware(["admin", "manager"]), maybeUpload, as
       updated_at: new Date()
     };
     
-    const result = await collections.products().findOneAndUpdate(
-      { _id: req.params.id },
+    const productId = toObjectId(req.params.id);
+    
+    const doc = await collections.products().findOneAndUpdate(
+      { _id: productId },
       { $set: updateData },
       { returnDocument: "after" }
     );
     
-    if (!result) return res.status(404).json({ error: "Product not found" });
+    if (!doc) {
+      return res.status(404).json({ error: "Product not found" });
+    }
     
     logAudit({
       actor_id: req.user.id,
       action: "update",
       entity: "product",
       entity_id: req.params.id,
-      metadata: { name: result.name }
+      metadata: { name: doc.name }
     });
     
     clearCache("products");
     clearCache("categories");
-    res.json(result);
+    res.json(doc);
   } catch (err) {
+    console.error("[products] PUT /:id error:", err);
     res.status(400).json({ error: err.message });
   }
 });
 
 productsRouter.delete("/:id", authMiddleware(["admin", "manager"]), async (req, res) => {
   try {
-    const result = await collections.products().findOneAndUpdate(
-      { _id: req.params.id },
+    const productId = toObjectId(req.params.id);
+    
+    const doc = await collections.products().findOneAndUpdate(
+      { _id: productId },
       { $set: { is_deleted: true, updated_at: new Date() } }
     );
     
-    if (!result) return res.status(404).json({ error: "Product not found" });
+    if (!doc) return res.status(404).json({ error: "Product not found" });
     
     logAudit({
       actor_id: req.user.id,
@@ -541,6 +550,7 @@ productsRouter.delete("/:id", authMiddleware(["admin", "manager"]), async (req, 
     clearCache("categories");
     res.status(204).send();
   } catch (err) {
+    console.error("[products] DELETE /:id error:", err);
     res.status(400).json({ error: err.message });
   }
 });
@@ -549,7 +559,7 @@ productsRouter.post("/generate-image/:id", authMiddleware(["admin", "manager"]),
   try {
     const product = await collections.products()
       .aggregate([
-        { $match: { _id: req.params.id } },
+        { $match: { _id: toObjectId(req.params.id) } },
         {
           $lookup: {
             from: "categories",
@@ -609,7 +619,7 @@ productsRouter.post("/generate-image/:id", authMiddleware(["admin", "manager"]),
 
     if (imageUrl) {
       await collections.products().updateOne(
-        { _id: req.params.id },
+        { _id: toObjectId(req.params.id) },
         { $set: { image_url: imageUrl, updated_at: new Date() } }
       );
       clearCache("products");
@@ -626,7 +636,7 @@ productsRouter.post("/generate-keywords/:id", authMiddleware(["admin", "manager"
   try {
     const product = await collections.products()
       .aggregate([
-        { $match: { _id: req.params.id } },
+        { $match: { _id: toObjectId(req.params.id) } },
         {
           $lookup: {
             from: "categories",

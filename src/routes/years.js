@@ -34,7 +34,7 @@ yearsRouter.get("/", async (_req, res) => {
 
 yearsRouter.get("/:id", async (req, res) => {
   try {
-    const year = await collections.years().findOne({ _id: req.params.id });
+    const year = await collections.years().findOne({ _id: toObjectId(req.params.id) });
     if (!year) return res.status(404).json({ error: "Year not found" });
     year.id = String(year._id);
     year._id = undefined;
@@ -63,7 +63,7 @@ yearsRouter.put("/:id", authMiddleware("admin"), async (req, res) => {
   try {
     const payload = yearSchema.partial().parse(req.body);
     const result = await collections.years().findOneAndUpdate(
-      { _id: req.params.id },
+      { _id: toObjectId(req.params.id) },
       { $set: payload },
       { returnDocument: "after" }
     );
@@ -77,7 +77,7 @@ yearsRouter.put("/:id", authMiddleware("admin"), async (req, res) => {
 
 yearsRouter.delete("/:id", authMiddleware("admin"), async (req, res) => {
   try {
-    const result = await collections.years().deleteOne({ _id: req.params.id });
+    const result = await collections.years().deleteOne({ _id: toObjectId(req.params.id) });
     if (result.deletedCount === 0) return res.status(404).json({ error: "Year not found" });
     clearCache("years");
     res.status(204).send();

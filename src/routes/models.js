@@ -65,7 +65,7 @@ modelsRouter.get("/:id", async (req, res) => {
   try {
     const model = await collections.models()
       .aggregate([
-        { $match: { _id: req.params.id } },
+        { $match: { _id: toObjectId(req.params.id) } },
         {
           $lookup: {
             from: "brands",
