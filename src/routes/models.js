@@ -27,23 +27,21 @@ modelsRouter.get("/", async (_req, res) => {
   if (cached) return res.json(cached);
   
   try {
-    const models = await collections.models()
-      .aggregate([
-        {
-          $lookup: {
-            from: "brands",
-            localField: "brand_id",
-            foreignField: "_id",
-            as: "brand_data"
-          }
-        },
-        { $unwind: { path: "$brand_data", preserveNullAndEmptyArrays: true } },
-        { $match: { "brand_data.is_hidden": { $ne: true } } },
-        { $sort: { name: 1 } }
-      ])
-      .toArray();
-    
-    const formatted = models.map(m => ({
+    const [hiddenBrandIds, allModels] = await Promise.all([
+      collections.brands()
+        .find({ is_hidden: true }, { projection: { _id: 1 } })
+        .toArray(),
+      collections.models()
+        .find({})
+        .sort({ name: 1 })
+        .toArray()
+    ]);
+
+    const hiddenSet = new Set(hiddenBrandIds.map(b => b._id.toString()));
+
+    const visibleModels = allModels.filter(m => !hiddenSet.has(m.brand_id?.toString()));
+
+    const formatted = visibleModels.map(m => ({
       id: m._id.toString(),
       _id: undefined,
       name: m.name,
@@ -51,7 +49,6 @@ modelsRouter.get("/", async (_req, res) => {
       years: m.years,
       image_url: m.image_url,
       gallery: m.gallery,
-      brands: { name: m.brand_data?.name, is_hidden: m.brand_data?.is_hidden }
     }));
     
     setCache(cacheKey, formatted, 3600000);

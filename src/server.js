@@ -100,23 +100,36 @@ const port = process.env.PORT || 4000;
 
 async function warmCache() {
   try {
-    const [cats, brds, mdlz, yrs] = await Promise.all([
+    const [cats, brds, yrs] = await Promise.all([
       collections.categories().find({}).sort({ name: 1 }).toArray(),
       collections.brands().find({ is_hidden: { $ne: true } }).sort({ name: 1 }).toArray(),
-      collections.models().find({}).sort({ name: 1 }).toArray(),
-      collections.years().find({ label: -1 }).toArray(),
+      collections.years().find({}).sort({ label: -1 }).toArray(),
     ]);
-    
-    const visibleModels = (mdlz || []).filter(m => !m.is_hidden);
-    
+
+    const hiddenBrandIds = new Set(
+      (await collections.brands().find({ is_hidden: true }, { projection: { _id: 1 } }).toArray())
+        .map(b => b._id.toString())
+    );
+
+    const allModels = await collections.models().find({}).sort({ name: 1 }).toArray();
+    const visibleModels = allModels.filter(m => !hiddenBrandIds.has(m.brand_id?.toString()));
+
     const formattedCats = cats.map(c => ({ ...c, id: c._id?.toString(), _id: undefined }));
     const formattedBrds = brds.map(b => ({ ...b, id: b._id?.toString(), _id: undefined }));
-    const formattedModels = visibleModels.map(m => ({ ...m, id: m._id?.toString(), _id: undefined }));
+    const formattedModels = visibleModels.map(m => ({
+      id: m._id.toString(),
+      _id: undefined,
+      name: m.name,
+      brand_id: m.brand_id?.toString(),
+      years: m.years,
+      image_url: m.image_url,
+      gallery: m.gallery,
+    }));
     const formattedYears = yrs.map(y => ({ ...y, id: y._id?.toString(), _id: undefined }));
-    
+
     setCache("categories:all", formattedCats, 3600000);
     setCache("brands:all", formattedBrds, 3600000);
-    setCache("models:all", formattedModels, 3600000);
+    setCache("models:visible", formattedModels, 3600000);
     setCache("years:all", formattedYears, 3600000);
     console.log("[cache] warmed", new Date().toISOString());
   } catch (err) {
